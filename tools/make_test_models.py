@@ -208,6 +208,9 @@ def make_glb(path):
 
 
 def main():
+    # Windows konsolu (cp1252) Türkçe karakterleri basamayabilir
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(encoding='utf-8', errors='replace')
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'samples')
     os.makedirs(out, exist_ok=True)
     make_stl(os.path.join(out, 'torus_knot.stl'))

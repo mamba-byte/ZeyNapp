@@ -41,26 +41,52 @@ jobs:
           MV3D_ONEDIR: '0'
         run: python -m PyInstaller --noconfirm --clean ModelViewer3D.spec
 
-      - name: Duman testi (örnek model aç + ekran görüntüsü al)
+      - name: Duman testi (her görüntüleme modunda örnek model aç + ekran görüntüsü al)
         continue-on-error: true
         shell: pwsh
+        env:
+          PYTHONUTF8: '1'
+          # Chromium'un kendi hata mesajları (ör. ölümcül CHECK) stderr'e yazılsın
+          QTWEBENGINE_CHROMIUM_FLAGS: '--enable-logging=stderr --log-level=0'
         run: |
           python tools/make_test_models.py samples
-          $p = Start-Process -FilePath "dist\ModelViewer3D.exe" `
-                 -ArgumentList 'samples\animated.glb','--capture','smoke.png','--software-gl','--profile','ci' `
-                 -PassThru
-          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'Zaman aşımı: uygulama 3 dakika içinde kapanmadı' }
-          if (-not (Test-Path smoke.png)) { throw "Ekran görüntüsü oluşmadı (çıkış kodu $($p.ExitCode))" }
-          Write-Host "Duman testi başarılı: smoke.png"
+          New-Item -ItemType Directory -Force smoke | Out-Null
+          $failed = @()
+          foreach ($mode in 'auto', 'software', 'nogpu') {
+            Write-Host "::group::Duman testi - mod: $mode"
+            $out = "smoke\$mode"
+            $p = Start-Process -FilePath "dist\ModelViewer3D.exe" -PassThru `
+                   -ArgumentList 'samples\animated.glb', '--capture', "$out.png", '--render-mode', $mode, '--profile', "ci-$mode" `
+                   -RedirectStandardOutput "$out.stdout.txt" -RedirectStandardError "$out.stderr.txt"
+            if (-not $p.WaitForExit(150000)) { $p.Kill(); Write-Host 'ZAMAN AŞIMI (150 sn)' }
+            $code = $p.ExitCode
+            Write-Host ("Çıkış kodu: {0} (0x{0:X8})" -f $code)
+            Write-Host '--- stderr (son 120 satır) ---'
+            Get-Content "$out.stderr.txt" -Tail 120 -ErrorAction SilentlyContinue
+            if (Test-Path "$out.png") { Write-Host "BAŞARILI: $out.png" } else { Write-Host 'BAŞARISIZ: ekran görüntüsü yok'; $failed += $mode }
+            Write-Host '::endgroup::'
+          }
+          Write-Host '::group::Uygulama günlükleri (viewer.log / crash.log)'
+          Copy-Item "$env:LOCALAPPDATA\ModelViewer3D\*.log" smoke\ -ErrorAction SilentlyContinue
+          Get-Content "$env:LOCALAPPDATA\ModelViewer3D\viewer.log" -ErrorAction SilentlyContinue
+          Get-Content "$env:LOCALAPPDATA\ModelViewer3D\crash.log" -ErrorAction SilentlyContinue
+          Write-Host '::endgroup::'
+          if ($failed.Count) { throw "Duman testi başarısız modlar: $($failed -join ', ')" }
 
       - name: Exe'yi yükle (Artifacts)
         uses: actions/upload-artifact@v7
         with:
           name: ModelViewer3D-windows
-          path: |
-            dist/ModelViewer3D.exe
-            smoke.png
-          if-no-files-found: warn
+          path: dist/ModelViewer3D.exe
+          if-no-files-found: error
+
+      - name: Duman testi çıktılarını yükle
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: duman-testi-loglari
+          path: smoke/
+          if-no-files-found: ignore
 
       - name: Release oluştur (yalnızca v* etiketlerinde)
         if: startsWith(github.ref, 'refs/tags/v')

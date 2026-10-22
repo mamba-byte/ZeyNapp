@@ -29,6 +29,20 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return args
 
 
+_crash_file = None
+
+
+def _enable_crash_log(path: str) -> None:
+    """Yerel kodda çökme (erişim ihlali vb.) olursa Python yığınını crash.log'a yazar."""
+    import faulthandler
+
+    global _crash_file
+    if os.path.exists(path) and os.path.getsize(path) > 512_000:
+        os.remove(path)
+    _crash_file = open(path, 'a', encoding='utf-8')
+    faulthandler.enable(_crash_file, all_threads=True)
+
+
 def _setup_logging(debug: bool) -> str | None:
     level = logging.DEBUG if debug else logging.INFO
     handlers: list[logging.Handler] = []
@@ -41,6 +55,7 @@ def _setup_logging(debug: bool) -> str | None:
         os.makedirs(log_dir, exist_ok=True)
         log_path = os.path.join(log_dir, 'viewer.log')
         handlers.append(RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=2, encoding='utf-8'))
+        _enable_crash_log(os.path.join(log_dir, 'crash.log'))
     except OSError:
         pass
     logging.basicConfig(level=level, format='%(asctime)s %(levelname)s %(name)s: %(message)s', handlers=handlers)
