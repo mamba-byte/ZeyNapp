@@ -9,6 +9,7 @@ tarayıcının çözemediği formatlar (TIF, PSD, DDS) Pillow ile PNG'ye çevril
 from __future__ import annotations
 
 import io
+import json
 import logging
 import os
 import re
@@ -91,6 +92,10 @@ class AssetServer:
         self._indexes: dict[str, dict] = {}
         self._converted: OrderedDict = OrderedDict()
         self._lock = threading.Lock()
+        # JS -> Python köprüsü: /api/<yöntem> POST istekleri bu belirteçle doğrulanır.
+        # api_handler(yöntem, argümanlar) sunucu iş parçacığında çağrılır.
+        self.token = secrets.token_hex(16)
+        self.api_handler = None
         self.httpd = ThreadingHTTPServer(('127.0.0.1', port), _Handler)
         self.httpd.daemon_threads = True
         self.httpd.app = self  # type: ignore[attr-defined]
@@ -267,6 +272,28 @@ class _Handler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self._handle(send_body=False)
+
+    def do_POST(self):
+        app: AssetServer = self.server.app  # type: ignore[attr-defined]
+        path = urlsplit(self.path).path
+        try:
+            if not path.startswith('/api/') or app.api_handler is None:
+                self._send_error(404)
+                return
+            if not secrets.compare_digest(self.headers.get('X-MV-Token', ''), app.token):
+                self._send_error(403)
+                return
+            length = int(self.headers.get('Content-Length') or 0)
+            args = json.loads(self.rfile.read(length).decode('utf-8') or '[]') if length else []
+            if not isinstance(args, list):
+                args = [args]
+            result = app.api_handler(path[len('/api/'):], args)
+            self._send_bytes(json.dumps({'result': result}).encode('utf-8'), 'application/json; charset=utf-8', True)
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+            pass
+        except Exception:
+            log.exception('API isteği başarısız: %s', path)
+            self._send_error(500)
 
     def _handle(self, send_body: bool) -> None:
         app: AssetServer = self.server.app  # type: ignore[attr-defined]

@@ -52,7 +52,7 @@ jobs:
           python tools/make_test_models.py samples
           New-Item -ItemType Directory -Force smoke | Out-Null
           $failed = @()
-          foreach ($mode in 'auto', 'software', 'nogpu') {
+          foreach ($mode in 'auto', 'compat', 'software', 'nogpu') {
             Write-Host "::group::Duman testi - mod: $mode"
             $out = "smoke\$mode"
             $p = Start-Process -FilePath "dist\ModelViewer3D.exe" -PassThru `

@@ -8,10 +8,9 @@ import sys
 from functools import partial
 from urllib.parse import quote
 
-from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, QProcess, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QObject, QPoint, QProcess, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
-from PySide6.QtWebChannel import QWebChannel
-from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
+from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QWidget
 
@@ -49,7 +48,7 @@ THEMES = [
 MAX_RECENT = 10
 RENDER_MODE_LABELS = {
     'auto': 'Otomatik (GPU / Direct3D)',
-    'opengl': 'GPU – OpenGL uyumluluk modu',
+    'compat': 'GPU – uyumluluk modu',
     'software': 'Yazılımsal (SwiftShader)',
     'nogpu': 'GPU kapalı (en uyumlu)',
 }
@@ -167,10 +166,7 @@ class MainWindow(QMainWindow):
         self.page.profile().downloadRequested.connect(self._on_download_requested)
 
         self.bridge = Bridge(self)
-        self.channel = QWebChannel(self.page)
-        self.channel.registerObject('bridge', self.bridge)
-        self.page.setWebChannel(self.channel)
-        self._inject_webchannel_script()
+        server.api_handler = self.bridge.handle_api
 
         self.view.setPage(self.page)
         self.setCentralWidget(self.view)
@@ -185,24 +181,10 @@ class MainWindow(QMainWindow):
         if debug:
             QTimer.singleShot(1500, self.open_devtools)
 
-        self.view.load(QUrl(f'{server.base_url}/index.html'))
+        # belirteç, arayüzün /api köprüsünü kullanabilmesi için adreste taşınır
+        self.view.load(QUrl(f'{server.base_url}/index.html?t={server.token}'))
 
     # --------------------------------------------------------------- web setup
-    def _inject_webchannel_script(self) -> None:
-        f = QFile(':/qtwebchannel/qwebchannel.js')
-        if not f.open(QIODevice.OpenModeFlag.ReadOnly):
-            log.error('qwebchannel.js okunamadı')
-            return
-        source = bytes(f.readAll()).decode('utf-8')
-        f.close()
-        script = QWebEngineScript()
-        script.setName('qwebchannel')
-        script.setSourceCode(source)
-        script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
-        script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
-        script.setRunsOnSubFrames(False)
-        self.page.scripts().insert(script)
-
     def showEvent(self, ev):
         super().showEvent(ev)
         platform_win.enable_dark_title_bar(int(self.winId()))

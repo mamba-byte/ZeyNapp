@@ -1,17 +1,31 @@
-"""JavaScript <-> Python köprüsü (QWebChannel üzerinden ``bridge`` nesnesi)."""
+"""JavaScript <-> Python köprüsü.
+
+JS -> Python: Arayüz, yerel sunucunun ``/api/<yöntem>`` uç noktasına gizli belirteçle POST eder.
+İstek sunucu iş parçacığında gelir; pencereyle ilgili işler Qt sinyaliyle ana iş parçacığına
+aktarılır. (QWebChannel, Windows paketinde arayüzle bağlantı kuramadığı için kullanılmıyor.)
+
+Python -> JS: ``QWebEnginePage.runJavaScript`` ile ``viewerApp.command(...)`` çağrılır.
+"""
 from __future__ import annotations
 
 import base64
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from PySide6.QtCore import QObject, Slot
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 
 if TYPE_CHECKING:
     from .main_window import MainWindow
 
-log = logging.getLogger('viewer3d.js')
+log = logging.getLogger('viewer3d.bridge')
+jslog = logging.getLogger('viewer3d.js')
+
+GUI_METHODS = {
+    'ready', 'openFileDialog', 'reloadModel', 'saveImage', 'copyImage', 'deliverCapture',
+    'exportSettings', 'importSettingsDialog', 'chooseTexture', 'reportState', 'notify',
+    'savePreferences', 'toggleFullscreen',
+}
 
 
 def decode_data_url(data_url: str) -> bytes:
@@ -20,68 +34,62 @@ def decode_data_url(data_url: str) -> bytes:
 
 
 class Bridge(QObject):
-    """Web arayüzünün çağırdığı yuvalar; işi ana pencereye devreder."""
+    _invoke = Signal(str, str)
 
     def __init__(self, window: 'MainWindow'):
         super().__init__(window)
         self._win = window
+        # sunucu iş parçacığından okunur; yalnızca ana iş parçacığında değiştirilir
+        self.preferences = window.load_preferences()
+        self._invoke.connect(self._dispatch, Qt.ConnectionType.QueuedConnection)
 
-    @Slot()
-    def ready(self) -> None:
-        self._win.on_js_ready()
+    # ------------------------------------------------- sunucu iş parçacığı
+    def handle_api(self, method: str, args: list) -> Any:
+        if method == 'log':
+            level, message = (list(args) + ['info', ''])[:2]
+            lvl = level if level in ('debug', 'info', 'warning', 'error') else 'info'
+            getattr(jslog, lvl)(str(message))
+            return True
+        if method == 'loadPreferences':
+            return self.preferences
+        if method not in GUI_METHODS:
+            raise ValueError(f'Bilinmeyen köprü yöntemi: {method}')
+        self._invoke.emit(method, json.dumps(args))
+        return True
 
-    @Slot()
-    def openFileDialog(self) -> None:
-        self._win.open_file_dialog()
-
-    @Slot()
-    def reloadModel(self) -> None:
-        self._win.reload_model()
-
+    # ------------------------------------------------- ana (GUI) iş parçacığı
     @Slot(str, str)
-    def saveImage(self, data_url: str, suggested_name: str) -> None:
-        self._win.save_image(decode_data_url(data_url), suggested_name)
-
-    @Slot(str)
-    def copyImage(self, data_url: str) -> None:
-        self._win.copy_image(decode_data_url(data_url))
-
-    @Slot(str)
-    def deliverCapture(self, data_url: str) -> None:
-        self._win.finish_capture(decode_data_url(data_url))
-
-    @Slot(str, str)
-    def exportSettings(self, content: str, suggested_name: str) -> None:
-        self._win.export_settings(content, suggested_name)
-
-    @Slot()
-    def importSettingsDialog(self) -> None:
-        self._win.import_settings_dialog()
-
-    @Slot(str)
-    def chooseTexture(self, payload: str) -> None:
-        self._win.choose_texture(json.loads(payload or '{}'))
-
-    @Slot(str)
-    def reportState(self, payload: str) -> None:
-        self._win.apply_js_state(json.loads(payload or '{}'))
-
-    @Slot(str, str)
-    def notify(self, kind: str, payload: str) -> None:
-        self._win.on_js_event(kind, json.loads(payload or '{}'))
-
-    @Slot(str)
-    def savePreferences(self, payload: str) -> None:
-        self._win.save_preferences(payload)
-
-    @Slot(result=str)
-    def loadPreferences(self) -> str:
-        return self._win.load_preferences()
-
-    @Slot()
-    def toggleFullscreen(self) -> None:
-        self._win.toggle_fullscreen()
-
-    @Slot(str, str)
-    def log(self, level: str, message: str) -> None:
-        getattr(log, level if level in ('debug', 'info', 'warning', 'error') else 'info')(message)
+    def _dispatch(self, method: str, args_json: str) -> None:
+        args = json.loads(args_json)
+        arg = lambda i, default=None: args[i] if len(args) > i else default  # noqa: E731
+        w = self._win
+        try:
+            if method == 'ready':
+                w.on_js_ready()
+            elif method == 'openFileDialog':
+                w.open_file_dialog()
+            elif method == 'reloadModel':
+                w.reload_model()
+            elif method == 'saveImage':
+                w.save_image(decode_data_url(arg(0, '')), arg(1, 'goruntu.png'))
+            elif method == 'copyImage':
+                w.copy_image(decode_data_url(arg(0, '')))
+            elif method == 'deliverCapture':
+                w.finish_capture(decode_data_url(arg(0, '')))
+            elif method == 'exportSettings':
+                w.export_settings(arg(0, '{}'), arg(1, 'ayarlar.json'))
+            elif method == 'importSettingsDialog':
+                w.import_settings_dialog()
+            elif method == 'chooseTexture':
+                w.choose_texture(dict(arg(0) or {}))
+            elif method == 'reportState':
+                w.apply_js_state(dict(arg(0) or {}))
+            elif method == 'notify':
+                w.on_js_event(str(arg(0, '')), dict(arg(1) or {}))
+            elif method == 'savePreferences':
+                self.preferences = str(arg(0, ''))
+                w.save_preferences(self.preferences)
+            elif method == 'toggleFullscreen':
+                w.toggle_fullscreen()
+        except Exception:
+            log.exception('Köprü çağrısı başarısız: %s', method)

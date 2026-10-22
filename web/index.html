@@ -5,6 +5,31 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>3B Model Görüntüleyici</title>
   <link rel="stylesheet" href="css/app.css">
+  <script>
+    // Erken teşhis: modüllerden önce çalışır; yükleme hatalarını uygulama günlüğüne yazar.
+    (function () {
+      var token = new URLSearchParams(location.search).get('t');
+      window.__diag = function (level, msg) {
+        if (!token) return;
+        try {
+          fetch('/api/log', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-MV-Token': token },
+            body: JSON.stringify([level, String(msg)])
+          }).catch(function () {});
+        } catch (e) { /* yok say */ }
+      };
+      window.addEventListener('error', function (e) {
+        var t = e.target;
+        var src = t && t !== window ? ' kaynak: ' + (t.src || t.href || t.tagName) : '';
+        window.__diag('error', (e.message || 'Kaynak yüklenemedi') + src + (e.filename ? ' @ ' + e.filename + ':' + e.lineno : ''));
+      }, true);
+      window.addEventListener('unhandledrejection', function (e) {
+        window.__diag('error', 'Promise hatası: ' + (e.reason && (e.reason.stack || e.reason)));
+      });
+      window.__diag('info', 'Sayfa betikleri çalışıyor: ' + navigator.userAgent);
+    })();
+  </script>
   <script type="importmap">
     {
       "imports": {

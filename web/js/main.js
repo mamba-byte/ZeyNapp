@@ -15,6 +15,9 @@ import { fmtShort } from './ui/dom.js';
 import { hydrateIcons } from './ui/icons.js';
 import { installTooltips } from './ui/dom.js';
 
+// Buraya gelindiyse tüm modüller (three.js dahil) yüklenmiştir
+window.__diag?.('info', 'main.js ve modüller yüklendi');
+
 const PREFS_KEY = 'modelviewer3d.prefs';
 const SRGB_SLOTS = new Set(['map', 'emissiveMap', 'specularColorMap', 'sheenColorMap']);
 const extOf = name => (String(name).split(/[?#]/)[0].match(/\.([^./\\]+)$/)?.[1] || '').toLowerCase();
@@ -57,6 +60,7 @@ class App {
     await new Promise(r => setTimeout(r, 30)); // sayfa önce çizilsin
 
     const viewport = document.getElementById('viewport');
+    window.__diag?.('info', '3B motor (WebGL) oluşturuluyor…');
     try {
       this.viewer = new Viewer(viewport);
       this.glInfo = this._glInfo();

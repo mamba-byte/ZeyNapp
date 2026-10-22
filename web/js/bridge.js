@@ -1,36 +1,31 @@
-// Qt (QWebChannel) köprüsü. Uygulama dışında (tarayıcıda) çalışırken null döner.
-export function connectBridge(timeout = 3000) {
-  return new Promise(resolve => {
-    if (!(window.qt && window.qt.webChannelTransport && window.QWebChannel)) {
-      resolve(null);
-      return;
-    }
-    const timer = setTimeout(() => resolve(null), timeout);
-    // eslint-disable-next-line no-undef
-    new QWebChannel(window.qt.webChannelTransport, channel => {
-      clearTimeout(timer);
-      resolve(wrap(channel.objects.bridge));
-    });
+// Python köprüsü: Qt uygulaması içinde yerel sunucunun /api uç noktasıyla konuşur.
+// Adresteki "t" belirteci yalnızca uygulama tarafından verilir; tarayıcıda (geliştirme) null döner.
+export function connectBridge() {
+  const token = new URLSearchParams(location.search).get('t');
+  if (!token) return Promise.resolve(null);
+  const call = (method, ...args) => fetch(`/api/${method}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-MV-Token': token },
+    body: JSON.stringify(args),
+  })
+    .then(r => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+    .then(j => j?.result)
+    .catch(err => { console.error(`Köprü çağrısı başarısız: ${method}`, err); return null; });
+  return Promise.resolve({
+    ready: () => call('ready'),
+    openFileDialog: () => call('openFileDialog'),
+    reloadModel: () => call('reloadModel'),
+    saveImage: (dataUrl, name) => call('saveImage', dataUrl, name),
+    copyImage: dataUrl => call('copyImage', dataUrl),
+    deliverCapture: dataUrl => call('deliverCapture', dataUrl),
+    exportSettings: (json, name) => call('exportSettings', json, name),
+    importSettingsDialog: () => call('importSettingsDialog'),
+    chooseTexture: payload => call('chooseTexture', payload),
+    reportState: state => call('reportState', state),
+    notify: (kind, data) => call('notify', kind, data || {}),
+    savePreferences: json => call('savePreferences', json),
+    loadPreferences: () => call('loadPreferences').then(r => r || ''),
+    toggleFullscreen: () => call('toggleFullscreen'),
+    log: (level, msg) => call('log', level, String(msg)),
   });
-}
-
-function wrap(b) {
-  return {
-    raw: b,
-    ready: () => b.ready(),
-    openFileDialog: () => b.openFileDialog(),
-    reloadModel: () => b.reloadModel(),
-    saveImage: (dataUrl, name) => b.saveImage(dataUrl, name),
-    copyImage: dataUrl => b.copyImage(dataUrl),
-    deliverCapture: dataUrl => b.deliverCapture(dataUrl),
-    exportSettings: (json, name) => b.exportSettings(json, name),
-    importSettingsDialog: () => b.importSettingsDialog(),
-    chooseTexture: payload => b.chooseTexture(JSON.stringify(payload)),
-    reportState: state => b.reportState(JSON.stringify(state)),
-    notify: (kind, data) => b.notify(kind, JSON.stringify(data || {})),
-    savePreferences: json => b.savePreferences(json),
-    loadPreferences: () => new Promise(resolve => b.loadPreferences(resolve)),
-    toggleFullscreen: () => b.toggleFullscreen(),
-    log: (level, msg) => b.log(level, String(msg)),
-  };
 }

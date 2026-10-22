@@ -56,7 +56,7 @@ Komut satırı seçenekleri:
 | `model.fbx` | Açılışta yüklenecek dosya ("Birlikte aç" ile de çalışır) |
 | `--shading wire` | Başlangıç modu: `lit`, `litwire`, `wire`, `unlit`, `clay`, `normals`, `uv`, `vcolor` |
 | `--capture cikti.png` | Modeli yükle, ekran görüntüsünü kaydet ve çık (toplu küçük resim üretimi) |
-| `--render-mode MOD` | Görüntüleme motoru: `auto` (GPU/Direct3D), `opengl`, `software` (SwiftShader), `nogpu` |
+| `--render-mode MOD` | Görüntüleme motoru: `auto` (GPU/Direct3D), `compat`, `software` (SwiftShader), `nogpu` |
 | `--software-gl` | `--render-mode software` kısayolu |
 | `--profile ad` | Ayrı bir ayar profili kullan |
 | `--debug` | Ayrıntılı günlük + geliştirici araçları |
@@ -115,7 +115,7 @@ main.py                     giriş noktası
 viewer3d/
   app.py                    komut satırı, Chromium bayrakları, Qt uygulaması
   main_window.py            QMainWindow, menüler, sürükle-bırak, dosya iletişim kutuları
-  bridge.py                 QWebChannel köprüsü (JS ↔ Python)
+  bridge.py                 JS ↔ Python köprüsü (yerel sunucunun /api uç noktası üzerinden)
   server.py                 127.0.0.1 üzerinde yerel varlık sunucusu + akıllı doku çözümleme
   theme.py, platform_win.py koyu Qt teması, koyu Windows başlık çubuğu
 web/
@@ -140,7 +140,7 @@ yükleyicilerini içerir. Uygulama internet gerektirmez; tüm dosyalar exe'nin i
 ## Sorun giderme
 
 - **3B alan açılmıyor, "Model Aç" tepki vermiyor:** Uygulama, 3B motor 20 saniye içinde başlamazsa
-  daha uyumlu bir görüntüleme moduna geçmeyi önerir ve kendini yeniden başlatır (OpenGL → yazılımsal →
+  daha uyumlu bir görüntüleme moduna geçmeyi önerir ve kendini yeniden başlatır (uyumluluk → yazılımsal →
   GPU kapalı). Modu elle seçmek için *Araçlar › Görüntüleme Motoru* menüsünü ya da `--render-mode` seçeneğini
   kullanın. Seçilen mod kaydedilir. Ekran kartı sürücüsünü güncellemek de çoğu zaman sorunu çözer.
 - **Doku görünmüyor:** Dokuları modelle aynı klasöre ya da `textures` alt klasörüne koyun. Eksik doku adları açılışta uyarı olarak gösterilir.

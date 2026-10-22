@@ -21,7 +21,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument('--shading', metavar='MOD', help='Başlangıç gölgelendirme modu (lit, litwire, wire, unlit, clay, normals, uv, vcolor)')
     p.add_argument('--profile', metavar='AD', help='Ayrı bir ayar profili kullan (ör. test veya sunum için)')
     p.add_argument('--software-gl', action='store_true', help='GPU sorunlarında yazılımsal (SwiftShader) WebGL kullan')
-    p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto, opengl, software, nogpu')
+    p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto, compat, software, nogpu')
     p.add_argument('--debug', action='store_true', help='Ayrıntılı günlük ve geliştirici araçları')
     p.add_argument('--serve-only', action='store_true', help='Yalnızca web sunucusunu başlat (tarayıcıda geliştirme için)')
     p.add_argument('--port', type=int, default=0, help='--serve-only için port')
@@ -62,14 +62,18 @@ def _setup_logging(debug: bool) -> str | None:
     return log_path
 
 
-# Görüntüleme motoru modları. "auto" Chromium'un varsayılanıdır (Windows'ta Direct3D 11);
-# GPU/sürücü sorunlarında sırasıyla daha uyumlu modlara geçilir.
-RENDER_MODES = ('auto', 'opengl', 'software', 'nogpu')
+# Görüntüleme motoru modları. "auto" Chromium'un varsayılanıdır (Windows'ta Direct3D 11).
+# Qt WebEngine Windows'ta sayfayı pencereye yalnızca Direct3D 11 paylaşımlı dokularıyla aktarabilir;
+# SwiftShader veya GPU'suz modlarda bu aktarım çöküyor, bu yüzden o modlarda sayfa birleştirme
+# (compositing) yazılımsal yapılır. GPU/sürücü sorunlarında modlar sırayla denenir.
+RENDER_MODES = ('auto', 'compat', 'software', 'nogpu')
 RENDER_FLAGS = {
     # Kara listedeki GPU'larda WebGL'in tamamen kapanması yerine yazılımsala düşmesine izin ver
     'auto': ['--enable-unsafe-swiftshader'],
-    'opengl': ['--use-gl=angle', '--use-angle=gl', '--enable-unsafe-swiftshader'],
-    'software': ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    # WebGL GPU'da, sayfa birleştirme yazılımsal
+    'compat': ['--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
+    # WebGL de yazılımsal (SwiftShader)
+    'software': ['--disable-gpu-compositing', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
     'nogpu': ['--disable-gpu', '--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
 }
 
