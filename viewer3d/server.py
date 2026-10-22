@@ -335,6 +335,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send_path(found, send_body)
 
     def _send_error(self, code: int) -> None:
+        log.warning('HTTP %s: %s', code, self.path.split('?', 1)[0])
         body = f'{code}'.encode()
         self.send_response(code)
         self.send_header('Content-Type', 'text/plain')

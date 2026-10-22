@@ -1,7 +1,7 @@
 .venv/
 venv/
-build/
-dist/
+/build/
+/dist/
 __pycache__/
 *.pyc
 samples/
