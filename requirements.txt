@@ -1,0 +1,3 @@
+# Çalışma zamanı bağımlılıkları (Python 3.10 – 3.13)
+PySide6==6.9.3      # Qt 6 arayüzü + QtWebEngine (gömülü Chromium, WebGL 2)
+Pillow>=10.4        # TIF / PSD / DDS dokularını otomatik PNG'ye dönüştürmek için

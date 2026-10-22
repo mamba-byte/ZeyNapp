@@ -1,0 +1,70 @@
+# Windows .exe'yi GitHub'ın Windows sunucusunda otomatik derler.
+#  - Her push / pull request'te derler ve exe'yi "Artifacts" olarak ekler.
+#  - "v1.0.0" gibi bir etiket (tag) gönderildiğinde exe'yi bir GitHub Release'e yükler.
+#  - Actions sekmesinden "Run workflow" ile elle de çalıştırılabilir.
+name: Windows EXE
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Kaynak kodu al
+        uses: actions/checkout@v4
+
+      - name: Python 3.13 kur
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-build.txt
+
+      - name: Bağımlılıkları kur
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-build.txt
+
+      - name: Tek dosya exe derle
+        env:
+          MV3D_ONEDIR: '0'
+        run: python -m PyInstaller --noconfirm --clean ModelViewer3D.spec
+
+      - name: Duman testi (örnek model aç + ekran görüntüsü al)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          python tools/make_test_models.py samples
+          $p = Start-Process -FilePath "dist\ModelViewer3D.exe" `
+                 -ArgumentList 'samples\animated.glb','--capture','smoke.png','--software-gl','--profile','ci' `
+                 -PassThru
+          if (-not $p.WaitForExit(180000)) { $p.Kill(); throw 'Zaman aşımı: uygulama 3 dakika içinde kapanmadı' }
+          if (-not (Test-Path smoke.png)) { throw "Ekran görüntüsü oluşmadı (çıkış kodu $($p.ExitCode))" }
+          Write-Host "Duman testi başarılı: smoke.png"
+
+      - name: Exe'yi yükle (Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ModelViewer3D-windows
+          path: |
+            dist/ModelViewer3D.exe
+            smoke.png
+          if-no-files-found: warn
+
+      - name: Release oluştur (yalnızca v* etiketlerinde)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/ModelViewer3D.exe
+          generate_release_notes: true

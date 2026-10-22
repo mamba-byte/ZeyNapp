@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3B Model Görüntüleyici</title>
+  <link rel="stylesheet" href="css/app.css">
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "./vendor/three/build/three.module.js",
+        "three/addons/": "./vendor/three/examples/jsm/"
+      }
+    }
+  </script>
+  <script type="module" src="js/main.js"></script>
+</head>
+<body>
+  <div id="app" class="no-model">
+    <main id="stage">
+      <div id="viewport">
+        <div class="hud hud-top">
+          <div class="toolbar" id="mode-toolbar" role="toolbar" aria-label="Gölgelendirme modu"></div>
+        </div>
+        <div class="hud hud-right" id="view-toolbar"></div>
+        <div class="hud hud-bottom-left" id="model-badge" hidden></div>
+
+        <div id="empty-state">
+          <div class="empty-card">
+            <div class="empty-icon" data-icon="cube" data-size="54"></div>
+            <h1>Bir 3B model açın</h1>
+            <p>Dosyayı bu alana sürükleyip bırakın veya <b>Dosya › Aç</b> menüsünü kullanın.</p>
+            <button class="btn btn-primary" id="empty-open"><span data-icon="folder"></span>Model Aç…</button>
+            <div class="formats">FBX · GLB · GLTF · OBJ (+MTL) · STL · PLY · DAE · 3MF</div>
+          </div>
+        </div>
+
+        <div id="loading" hidden>
+          <div class="loading-card">
+            <div class="spinner"></div>
+            <div class="loading-name" id="loading-name"></div>
+            <div class="progress"><div class="progress-bar" id="loading-bar"></div></div>
+            <div class="loading-stage" id="loading-stage">Yükleniyor…</div>
+          </div>
+        </div>
+
+        <div id="drop-overlay" hidden>
+          <div class="drop-card"><span data-icon="upload" data-size="40"></span><div>Bırakın</div></div>
+        </div>
+        <div id="toasts" aria-live="polite"></div>
+      </div>
+      <footer id="animbar"></footer>
+    </main>
+
+    <aside id="panel" aria-label="Ayarlar paneli">
+      <nav class="panel-tabs" role="tablist"></nav>
+      <div class="panel-title" id="panel-title"></div>
+      <div class="panel-body" id="panel-body"></div>
+    </aside>
+  </div>
+
+  <div id="modal-root"></div>
+  <input type="file" id="file-input" multiple hidden>
+  <input type="file" id="settings-input" accept=".json,application/json" hidden>
+  <input type="file" id="texture-input" accept="image/*,.tga,.tif,.tiff,.psd,.dds" hidden>
+
+  <noscript>Bu uygulama JavaScript gerektirir.</noscript>
+</body>
+</html>

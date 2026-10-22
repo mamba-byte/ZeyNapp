@@ -1,0 +1,9 @@
+.venv/
+venv/
+build/
+dist/
+__pycache__/
+*.pyc
+samples/
+.DS_Store
+.claude/settings.local.json
