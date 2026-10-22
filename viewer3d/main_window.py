@@ -47,10 +47,8 @@ THEMES = [
 ]
 MAX_RECENT = 10
 RENDER_MODE_LABELS = {
-    'auto': 'Otomatik (GPU / Direct3D)',
-    'compat': 'GPU – uyumluluk modu',
-    'software': 'Yazılımsal (SwiftShader)',
-    'nogpu': 'GPU kapalı (en uyumlu)',
+    'auto': 'Otomatik (GPU / Direct3D 11)',
+    'software': 'Yazılımsal (CPU, en uyumlu)',
 }
 JS_READY_TIMEOUT_MS = 20000
 

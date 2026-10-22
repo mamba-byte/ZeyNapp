@@ -21,7 +21,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument('--shading', metavar='MOD', help='Başlangıç gölgelendirme modu (lit, litwire, wire, unlit, clay, normals, uv, vcolor)')
     p.add_argument('--profile', metavar='AD', help='Ayrı bir ayar profili kullan (ör. test veya sunum için)')
     p.add_argument('--software-gl', action='store_true', help='GPU sorunlarında yazılımsal (SwiftShader) WebGL kullan')
-    p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto, compat, software, nogpu')
+    p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto (GPU) veya software (yazılımsal)')
     p.add_argument('--debug', action='store_true', help='Ayrıntılı günlük ve geliştirici araçları')
     p.add_argument('--serve-only', action='store_true', help='Yalnızca web sunucusunu başlat (tarayıcıda geliştirme için)')
     p.add_argument('--port', type=int, default=0, help='--serve-only için port')
@@ -62,19 +62,17 @@ def _setup_logging(debug: bool) -> str | None:
     return log_path
 
 
-# Görüntüleme motoru modları. "auto" Chromium'un varsayılanıdır (Windows'ta Direct3D 11).
-# Qt WebEngine Windows'ta sayfayı pencereye yalnızca Direct3D 11 paylaşımlı dokularıyla aktarabilir;
-# SwiftShader veya GPU'suz modlarda bu aktarım çöküyor, bu yüzden o modlarda sayfa birleştirme
-# (compositing) yazılımsal yapılır. GPU/sürücü sorunlarında modlar sırayla denenir.
-RENDER_MODES = ('auto', 'compat', 'software', 'nogpu')
+# Görüntüleme motoru modları (Windows CI testleriyle doğrulandı):
+#  auto     — Chromium varsayılanı, Windows'ta GPU üzerinde Direct3D 11.
+#  software — WebGL yazılımsal (SwiftShader), sayfa birleştirme yazılımsal. GPU yoksa, GPU kara
+#             listedeyse (ör. sanal makine / "Microsoft Basic Render Driver") veya sürücü sorunluysa.
+# Not: Qt WebEngine Windows'ta sayfayı yalnızca Direct3D 11 paylaşımlı dokularıyla aktarabilir;
+# SwiftShader kullanırken birleştirme yazılımsal yapılmazsa süreç çöker. "--disable-gpu" ise
+# bu Chromium sürümünde WebGL'i tamamen kapattığı için 3B görüntüleyicide kullanılamaz.
+RENDER_MODES = ('auto', 'software')
 RENDER_FLAGS = {
-    # Kara listedeki GPU'larda WebGL'in tamamen kapanması yerine yazılımsala düşmesine izin ver
     'auto': ['--enable-unsafe-swiftshader'],
-    # WebGL GPU'da, sayfa birleştirme yazılımsal
-    'compat': ['--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
-    # WebGL de yazılımsal (SwiftShader)
     'software': ['--disable-gpu-compositing', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
-    'nogpu': ['--disable-gpu', '--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
 }
 
 
