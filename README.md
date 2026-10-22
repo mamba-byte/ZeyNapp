@@ -46,7 +46,8 @@ Komut satırı seçenekleri:
 | `model.fbx` | Açılışta yüklenecek dosya ("Birlikte aç" ile de çalışır) |
 | `--shading wire` | Başlangıç modu: `lit`, `litwire`, `wire`, `unlit`, `clay`, `normals`, `uv`, `vcolor` |
 | `--capture cikti.png` | Modeli yükle, ekran görüntüsünü kaydet ve çık (toplu küçük resim üretimi) |
-| `--software-gl` | Ekran kartı/sürücü sorunlarında yazılımsal WebGL (SwiftShader) |
+| `--render-mode MOD` | Görüntüleme motoru: `auto` (GPU/Direct3D), `opengl`, `software` (SwiftShader), `nogpu` |
+| `--software-gl` | `--render-mode software` kısayolu |
 | `--profile ad` | Ayrı bir ayar profili kullan |
 | `--debug` | Ayrıntılı günlük + geliştirici araçları |
 
@@ -128,10 +129,14 @@ yükleyicilerini içerir. Uygulama internet gerektirmez; tüm dosyalar exe'nin i
 
 ## Sorun giderme
 
-- **Siyah ekran / "Görüntüleme başlatılamadı":** Ekran kartı sürücüsünü güncelleyin veya `ModelViewer3D.exe --software-gl` ile açın.
+- **3B alan açılmıyor, "Model Aç" tepki vermiyor:** Uygulama, 3B motor 20 saniye içinde başlamazsa
+  daha uyumlu bir görüntüleme moduna geçmeyi önerir ve kendini yeniden başlatır (OpenGL → yazılımsal →
+  GPU kapalı). Modu elle seçmek için *Araçlar › Görüntüleme Motoru* menüsünü ya da `--render-mode` seçeneğini
+  kullanın. Seçilen mod kaydedilir. Ekran kartı sürücüsünü güncellemek de çoğu zaman sorunu çözer.
 - **Doku görünmüyor:** Dokuları modelle aynı klasöre ya da `textures` alt klasörüne koyun. Eksik doku adları açılışta uyarı olarak gösterilir.
 - **Model yan yatık:** *Araçlar › Modeli Döndür* menüsünü kullanın.
-- **Günlükler:** `%LOCALAPPDATA%\ModelViewer3D\viewer.log` (*Yardım › Günlük Klasörünü Aç*).
+- **Günlükler:** `%LOCALAPPDATA%\ModelViewer3D\viewer.log` (*Yardım › Günlük Klasörünü Aç*). Başlangıçta
+  kullanılan görüntüleme modu, ekran kartı (WebGL) bilgisi ve Qt/Chromium uyarıları buraya yazılır.
 
 ## Lisanslar
 

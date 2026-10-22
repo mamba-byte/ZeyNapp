@@ -47,28 +47,35 @@ class App {
 
   async init() {
     this.bridge = await connectBridge();
+    // Teşhis: betikler çalışıyor (WebGL'den önce). Python'daki bekçi bu sinyali bekler.
+    this.bridge?.notify('boot', { userAgent: navigator.userAgent });
+    window.addEventListener('error', e => this.bridge?.log('error', `${e.message} @ ${e.filename}:${e.lineno}`));
+    window.addEventListener('unhandledrejection', e => this.bridge?.log('error', `Promise: ${e.reason?.stack || e.reason}`));
+    hydrateIcons();
+    // WebGL'e bağlı olmayan etkileşimler önce bağlanır; 3B motor takılsa bile buton çalışır
+    document.getElementById('empty-open').addEventListener('click', () => this.command('openDialog'));
+    await new Promise(r => setTimeout(r, 30)); // sayfa önce çizilsin
+
     const viewport = document.getElementById('viewport');
     try {
       this.viewer = new Viewer(viewport);
+      this.glInfo = this._glInfo();
+      this.env = new EnvironmentManager(this.viewer);
+      this.shading = new ShadingManager(this.viewer);
+      this.anim = new AnimationController(this.viewer);
+      this.loader = new ModelLoader(this.viewer.renderer);
+      this.hud = new Hud(this);
+      this.panel = new Panel(this);
+      this.animBar = new AnimBar(document.getElementById('animbar'), this.anim);
     } catch (err) {
-      this._fatal('WebGL başlatılamadı. Ekran kartı sürücülerinizi güncelleyin veya uygulamayı "--software-gl" parametresiyle başlatın.', err);
+      this._fatal('3B motor (WebGL) başlatılamadı. Ekran kartı sürücülerinizi güncelleyin veya Araçlar › Görüntüleme Motoru menüsünden başka bir mod seçin.', err);
       return;
     }
-    this.glInfo = this._glInfo();
-    this.env = new EnvironmentManager(this.viewer);
-    this.shading = new ShadingManager(this.viewer);
-    this.anim = new AnimationController(this.viewer);
-    this.loader = new ModelLoader(this.viewer.renderer);
-    this.hud = new Hud(this);
-    this.panel = new Panel(this);
-    this.animBar = new AnimBar(document.getElementById('animbar'), this.anim);
-    hydrateIcons();
 
     this._wireEvents();
     this._installKeyboard();
     this._installDropFallback();
     this._installFileInputs();
-    document.getElementById('empty-open').addEventListener('click', () => this.command('openDialog'));
 
     const prefs = await this._loadPrefs();
     if (prefs) {
@@ -81,6 +88,7 @@ class App {
       try { this.panel.env.setThumbnails(await renderThemeThumbnails()); } catch (e) { console.warn('Tema önizlemeleri üretilemedi', e); }
     }, 500);
 
+    this.bridge?.notify('ready', { gl: this.glInfo });
     this.bridge?.ready();
     this.reportState();
     // geliştirme: "python main.py --serve-only model.fbx" ile tarayıcıda açma
@@ -94,8 +102,8 @@ class App {
     const card = document.querySelector('.empty-card');
     card.querySelector('h1').textContent = 'Görüntüleme başlatılamadı';
     card.querySelector('p').textContent = text;
-    this.bridge?.log('error', `${text} ${err}`);
-    this.bridge?.notify('fatal', { message: text });
+    this.bridge?.log('error', `${text} ${err?.stack || err}`);
+    this.bridge?.notify('fatal', { message: text, error: String(err?.message || err) });
   }
 
   _glInfo() {
@@ -137,8 +145,6 @@ class App {
       if (selTimer > 0.12) { selTimer = 0; v.refreshSelectionBox(); }
       return false;
     });
-    window.addEventListener('error', e => this.bridge?.log('error', `${e.message} @ ${e.filename}:${e.lineno}`));
-    window.addEventListener('unhandledrejection', e => this.bridge?.log('error', `Promise: ${e.reason?.stack || e.reason}`));
   }
 
   _flags() {

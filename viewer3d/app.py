@@ -21,6 +21,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument('--shading', metavar='MOD', help='Başlangıç gölgelendirme modu (lit, litwire, wire, unlit, clay, normals, uv, vcolor)')
     p.add_argument('--profile', metavar='AD', help='Ayrı bir ayar profili kullan (ör. test veya sunum için)')
     p.add_argument('--software-gl', action='store_true', help='GPU sorunlarında yazılımsal (SwiftShader) WebGL kullan')
+    p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto, opengl, software, nogpu')
     p.add_argument('--debug', action='store_true', help='Ayrıntılı günlük ve geliştirici araçları')
     p.add_argument('--serve-only', action='store_true', help='Yalnızca web sunucusunu başlat (tarayıcıda geliştirme için)')
     p.add_argument('--port', type=int, default=0, help='--serve-only için port')
@@ -46,15 +47,61 @@ def _setup_logging(debug: bool) -> str | None:
     return log_path
 
 
-def _chromium_flags(software_gl: bool) -> None:
+# Görüntüleme motoru modları. "auto" Chromium'un varsayılanıdır (Windows'ta Direct3D 11);
+# GPU/sürücü sorunlarında sırasıyla daha uyumlu modlara geçilir.
+RENDER_MODES = ('auto', 'opengl', 'software', 'nogpu')
+RENDER_FLAGS = {
+    # Kara listedeki GPU'larda WebGL'in tamamen kapanması yerine yazılımsala düşmesine izin ver
+    'auto': ['--enable-unsafe-swiftshader'],
+    'opengl': ['--use-gl=angle', '--use-angle=gl', '--enable-unsafe-swiftshader'],
+    'software': ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    'nogpu': ['--disable-gpu', '--disable-gpu-compositing', '--enable-unsafe-swiftshader'],
+}
+
+
+def settings_app_name(profile: str | None) -> str:
+    return f'{APP_NAME} ({profile})' if profile else APP_NAME
+
+
+def _resolve_render_mode(args: argparse.Namespace) -> str:
+    if args.render_mode:
+        return args.render_mode
+    if args.software_gl:
+        return 'software'
+    try:
+        from PySide6.QtCore import QSettings
+        mode = str(QSettings(APP_ID, settings_app_name(args.profile)).value('render/mode', 'auto'))
+    except Exception:
+        mode = 'auto'
+    return mode if mode in RENDER_MODES else 'auto'
+
+
+def _chromium_flags(mode: str) -> None:
     flags = os.environ.get('QTWEBENGINE_CHROMIUM_FLAGS', '').split()
-    wanted = ['--ignore-gpu-blocklist', '--enable-gpu-rasterization', '--disable-renderer-backgrounding']
-    if software_gl:
-        wanted += ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader']
-    for f in wanted:
+    for f in ['--disable-renderer-backgrounding', *RENDER_FLAGS[mode]]:
         if f not in flags:
             flags.append(f)
     os.environ['QTWEBENGINE_CHROMIUM_FLAGS'] = ' '.join(flags)
+    log.info('Görüntüleme modu: %s  (Chromium bayrakları: %s)', mode, os.environ['QTWEBENGINE_CHROMIUM_FLAGS'])
+
+
+def _install_qt_message_handler() -> None:
+    """Qt ve QtWebEngine uyarılarını (pencereli exe'de görünmezler) günlük dosyasına yönlendirir."""
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    qt_log = logging.getLogger('viewer3d.qt')
+    levels = {
+        QtMsgType.QtDebugMsg: logging.DEBUG,
+        QtMsgType.QtInfoMsg: logging.INFO,
+        QtMsgType.QtWarningMsg: logging.WARNING,
+        QtMsgType.QtCriticalMsg: logging.ERROR,
+        QtMsgType.QtFatalMsg: logging.CRITICAL,
+    }
+
+    def handler(msg_type, _context, message):
+        qt_log.log(levels.get(msg_type, logging.INFO), message)
+
+    qInstallMessageHandler(handler)
 
 
 def _serve_only(port: int, file: str | None) -> int:
@@ -80,7 +127,9 @@ def run(argv: list[str]) -> int:
     if args.serve_only:
         return _serve_only(args.port, args.file)
 
-    _chromium_flags(args.software_gl)
+    render_mode = _resolve_render_mode(args)
+    _chromium_flags(render_mode)
+    _install_qt_message_handler()
 
     from PySide6.QtCore import QCoreApplication, Qt
     from PySide6.QtGui import QIcon
@@ -92,7 +141,7 @@ def run(argv: list[str]) -> int:
     platform_win.set_app_user_model_id(APP_ID)
     QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_ShareOpenGLContexts)
     app = QApplication(sys.argv[:1])
-    app.setApplicationName(f'{APP_NAME} ({args.profile})' if args.profile else APP_NAME)
+    app.setApplicationName(settings_app_name(args.profile))
     app.setOrganizationName(APP_ID)
     app.setApplicationVersion(APP_VERSION)
     theme.apply_dark_theme(app)
@@ -106,7 +155,8 @@ def run(argv: list[str]) -> int:
     server.start()
     initial = os.path.abspath(args.file) if args.file else None
     win = MainWindow(server, initial_file=initial, capture_path=args.capture,
-                     initial_shading=args.shading, debug=args.debug, log_path=log_path)
+                     initial_shading=args.shading, debug=args.debug, log_path=log_path,
+                     render_mode=render_mode)
     win.show()
     code = app.exec()
     server.stop()

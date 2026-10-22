@@ -8,7 +8,7 @@ import sys
 from functools import partial
 from urllib.parse import quote
 
-from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QEvent, QFile, QIODevice, QObject, QPoint, QProcess, QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QImage, QKeySequence
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineScript, QWebEngineSettings
@@ -16,6 +16,7 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QApplication, QFileDialog, QMainWindow, QMessageBox, QWidget
 
 from . import APP_NAME, APP_VERSION, platform_win
+from .app import RENDER_MODES
 from .bridge import Bridge
 from .server import AssetServer
 
@@ -46,6 +47,13 @@ THEMES = [
     ('contrast', 'Yüksek Kontrast Siyah'), ('studio', 'Parlak Beyaz Stüdyo'), ('multicolor', 'Çok Renkli Kontrast'),
 ]
 MAX_RECENT = 10
+RENDER_MODE_LABELS = {
+    'auto': 'Otomatik (GPU / Direct3D)',
+    'opengl': 'GPU – OpenGL uyumluluk modu',
+    'software': 'Yazılımsal (SwiftShader)',
+    'nogpu': 'GPU kapalı (en uyumlu)',
+}
+JS_READY_TIMEOUT_MS = 20000
 
 
 class ViewerPage(QWebEnginePage):
@@ -116,7 +124,8 @@ class DropFilter(QObject):
 
 class MainWindow(QMainWindow):
     def __init__(self, server: AssetServer, initial_file: str | None = None, capture_path: str | None = None,
-                 initial_shading: str | None = None, debug: bool = False, log_path: str | None = None):
+                 initial_shading: str | None = None, debug: bool = False, log_path: str | None = None,
+                 render_mode: str = 'auto'):
         super().__init__()
         self.server = server
         self.settings = QSettings()
@@ -131,6 +140,14 @@ class MainWindow(QMainWindow):
         self._state_actions: dict[str, QAction] = {}
         self._model_actions: list[QAction] = []
         self._devtools = None
+        self.render_mode = render_mode
+        self._boot_seen = False
+        self._failure_handled = False
+        self._crashes = 0
+        # Arayüz belirli sürede "hazır" demezse (WebGL/GPU takılması) kurtarma akışını başlat
+        self._watchdog = QTimer(self)
+        self._watchdog.setSingleShot(True)
+        self._watchdog.timeout.connect(self._on_watchdog)
 
         self.setWindowTitle(APP_NAME)
         self.setMinimumSize(960, 600)
@@ -160,6 +177,7 @@ class MainWindow(QMainWindow):
         self._drop_filter = DropFilter(self)
         self._drop_filter.attach(self.view)
         self.page.loadFinished.connect(lambda _ok: self._drop_filter.attach(self.view))
+        self.page.loadFinished.connect(self._on_load_finished)
 
         self._build_menus()
         self._update_model_actions(False)
@@ -199,6 +217,8 @@ class MainWindow(QMainWindow):
 
     def on_js_ready(self) -> None:
         self._js_ready = True
+        self._watchdog.stop()
+        log.info('Arayüz hazır.')
         pending, self._pending_js = self._pending_js, []
         for code in pending:
             self.page.runJavaScript(code)
@@ -302,6 +322,12 @@ class MainWindow(QMainWindow):
         for tid, label in THEMES:
             self._action(themes, label, partial(js, 'theme', tid), group=self.theme_group, data=tid)
         m.addSeparator()
+        engine = m.addMenu('Görüntüleme Motoru')
+        self.render_group = QActionGroup(self)
+        for mode in RENDER_MODES:
+            act = self._action(engine, RENDER_MODE_LABELS[mode], partial(self._choose_render_mode, mode),
+                               group=self.render_group, data=mode)
+            act.setChecked(mode == self.render_mode)
         self._action(m, 'Geliştirici Araçları', self.open_devtools, 'Ctrl+Shift+I')
 
         m = mb.addMenu('&Yardım')
@@ -496,10 +522,14 @@ class MainWindow(QMainWindow):
             log.error('Yükleme hatası: %s', data.get('message'))
             if self.capture_path:
                 QApplication.instance().exit(2)
+        elif kind == 'boot':
+            self._boot_seen = True
+            log.info('Arayüz betikleri çalışıyor: %s', data.get('userAgent', ''))
+        elif kind == 'ready':
+            log.info('WebGL hazır: %s', data.get('gl', '?'))
         elif kind == 'fatal':
             log.error('Görüntüleme başlatılamadı: %s', data.get('message'))
-            if self.capture_path:
-                QApplication.instance().exit(3)
+            self._render_failure('WebGL başlatılamadı: ' + str(data.get('error') or data.get('message') or ''))
 
     def finish_capture(self, data: bytes) -> None:
         if not self.capture_path:
@@ -556,10 +586,100 @@ class MainWindow(QMainWindow):
     def _on_render_process_terminated(self, status, code) -> None:
         log.error('Web işlemi sonlandı (durum=%s, kod=%s)', status, code)
         self._js_ready = False
+        self._crashes += 1
+        if self._crashes >= 2:
+            self._render_failure(f'Görüntüleme işlemi tekrar tekrar çöktü (kod {code}).')
+            return
         QMessageBox.warning(self, APP_NAME, 'Görüntüleme motoru beklenmedik şekilde kapandı ve yeniden başlatılacak.')
         if self.current_file:
             self.initial_file = self.current_file
         self.view.reload()
+
+    # ------------------------------------------------------ render recovery
+    def _on_load_finished(self, ok: bool) -> None:
+        log.info('Arayüz sayfası yüklendi: %s', 'başarılı' if ok else 'BAŞARISIZ')
+        if not ok:
+            log.error('Arayüz sayfası yüklenemedi (%s/index.html)', self.server.base_url)
+        if not self._js_ready:
+            self._watchdog.start(JS_READY_TIMEOUT_MS)
+
+    def _on_watchdog(self) -> None:
+        if self._js_ready:
+            return
+        if self._boot_seen:
+            reason = 'Arayüz başladı ancak 3B motor (WebGL) zamanında açılamadı; GPU veya sürücü takılıyor olabilir.'
+        else:
+            reason = 'Arayüz betikleri hiç çalışmadı.'
+        log.error('Bekçi zaman aşımı: %s', reason)
+        self._render_failure(reason)
+
+    def _next_render_mode(self) -> str | None:
+        idx = RENDER_MODES.index(self.render_mode) if self.render_mode in RENDER_MODES else -1
+        return RENDER_MODES[idx + 1] if idx + 1 < len(RENDER_MODES) else None
+
+    def _render_failure(self, reason: str) -> None:
+        if self.capture_path:
+            QApplication.instance().exit(3)
+            return
+        if self._failure_handled:
+            return
+        self._failure_handled = True
+        nxt = self._next_render_mode()
+        log_hint = f'\n\nGünlük dosyası:\n{self.log_path}' if self.log_path else ''
+        if nxt is None:
+            QMessageBox.critical(self, APP_NAME,
+                                 f'3B görüntüleme motoru hiçbir modda başlatılamadı.\n\n{reason}{log_hint}')
+            return
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            f'3B görüntüleme motoru başlatılamadı.\n\n{reason}\n\n'
+            f'Şu anki mod: {RENDER_MODE_LABELS.get(self.render_mode, self.render_mode)}\n'
+            f'Uygulama "{RENDER_MODE_LABELS[nxt]}" moduyla yeniden başlatılsın mı?{log_hint}',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.restart_with_render_mode(nxt)
+
+    def _choose_render_mode(self, mode: str) -> None:
+        if mode == self.render_mode:
+            return
+        answer = QMessageBox.question(
+            self, APP_NAME,
+            f'Görüntüleme motoru "{RENDER_MODE_LABELS[mode]}" olarak değiştirilecek.\n'
+            'Değişikliğin uygulanması için uygulama yeniden başlatılsın mı?',
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.Yes)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.restart_with_render_mode(mode)
+        else:
+            for act in self.render_group.actions():
+                act.setChecked(act.data() == self.render_mode)
+
+    def restart_with_render_mode(self, mode: str) -> None:
+        self.settings.setValue('render/mode', mode)
+        self.settings.sync()
+        # komut satırındaki mod seçimini çıkar (yoksa kaydedilen modu ezer)
+        args, skip = [], False
+        for a in sys.argv[1:]:
+            if skip:
+                skip = False
+            elif a == '--render-mode':
+                skip = True
+            elif a != '--software-gl' and not a.startswith('--render-mode='):
+                args.append(a)
+        reopen = self.current_file or self.initial_file
+        if reopen:
+            args = [a for a in args if a.startswith('-') or not os.path.isfile(a)]
+            args.insert(0, reopen)
+        if getattr(sys, 'frozen', False):
+            program, program_args = sys.executable, args
+        else:
+            program, program_args = sys.executable, [os.path.abspath(sys.argv[0]), *args]
+        log.info('Yeniden başlatılıyor (mod=%s): %s %s', mode, program, program_args)
+        started = QProcess.startDetached(program, program_args)
+        ok = started[0] if isinstance(started, tuple) else bool(started)
+        if not ok:
+            QMessageBox.warning(self, APP_NAME, 'Uygulama otomatik olarak yeniden başlatılamadı. Lütfen elle tekrar açın; '
+                                                'seçilen görüntüleme modu kaydedildi.')
+        QTimer.singleShot(0, QApplication.instance().quit)
 
     def _restore_geometry(self) -> None:
         geo = self.settings.value('window/geometry')
