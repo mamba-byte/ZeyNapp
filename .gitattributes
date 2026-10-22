@@ -4,3 +4,4 @@
 *.wasm binary
 *.ico binary
 *.png binary
+*.command text eol=lf

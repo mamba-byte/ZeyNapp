@@ -31,7 +31,17 @@ Betik sırasıyla şunları yapar: uygun Python'u bulur → `.venv` sanal ortam�
 > sürebilir. Bazı antivirüsler PyInstaller ile üretilmiş imzasız exe'leri yanlışlıkla işaretleyebilir;
 > böyle bir durumda `onedir` modunu tercih edin.
 
-## Kaynak koddan çalıştırma (geliştirme)
+## macOS'ta çalıştırma
+
+Finder'da **`run_mac.command`** dosyasına çift tıklayın. İlk açılışta Python 3.13 ile `.venv` sanal
+ortamını kurar (birkaç dakika), sonraki açılışlar doğrudan başlar. Python 3.10–3.13 yoksa:
+`brew install python@3.13`. Terminalden model ve seçenek de verebilirsiniz:
+
+```bash
+./run_mac.command ~/Downloads/model.fbx
+```
+
+## Kaynak koddan çalıştırma (Windows, geliştirme)
 
 ```bat
 py -3.13 -m venv .venv
