@@ -268,6 +268,23 @@ export class ModelLoader {
   _postProcess(object, warnings) {
     const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
     const lights = [];
+    // FBXLoader materyali atanmamış her parça için ayrı bir "__DEFAULT" materyal üretir; bu,
+    // materyal sayısını şişirir. Hepsini tek bir paylaşılan "Atanmamış" materyalde birleştir.
+    const shared = new Map();
+    const unifyDefault = m => {
+      if (!m || m.name !== THREE.Loader.DEFAULT_MATERIAL_NAME || !m.isMeshPhongMaterial) return m;
+      const key = m.vertexColors ? 'vc' : 'plain';
+      if (!shared.has(key)) {
+        m.name = 'Atanmamış (varsayılan)';
+        shared.set(key, m);
+        return m;
+      }
+      m.dispose();
+      return shared.get(key);
+    };
+    object.traverse(o => {
+      if (o.isMesh) o.material = Array.isArray(o.material) ? o.material.map(unifyDefault) : unifyDefault(o.material);
+    });
     object.traverse(o => {
       if (o.isLight) { lights.push(o); return; }
       if (!o.isMesh) return;

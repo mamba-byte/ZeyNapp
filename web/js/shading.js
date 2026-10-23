@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { VertexNormalsHelper } from 'three/addons/helpers/VertexNormalsHelper.js';
 import { MATCAP_PRESETS, makeCheckerTexture, makeMatcapTexture } from './textures.js';
 
-export const MODES = ['lit', 'litwire', 'wire', 'unlit', 'clay', 'normals', 'uv', 'vcolor'];
+export const MODES = ['lit', 'litwire', 'wire', 'unlit', 'clay', 'matcolor', 'normals', 'uv', 'vcolor'];
 export const TECHNICAL_MODES = ['normals', 'uv', 'vcolor'];
 export const MODE_INFO = {
   lit: { name: 'Işıklı', sub: 'Lit', icon: 'modeLit', key: '1' },
@@ -11,6 +11,7 @@ export const MODE_INFO = {
   wire: { name: 'Tel Kafes', sub: 'Unlit Wireframe', icon: 'modeWire', key: '3' },
   unlit: { name: 'Işıksız', sub: 'Albedo', icon: 'modeUnlit', key: '4' },
   clay: { name: 'Kil / Matcap', sub: 'Clay', icon: 'modeClay', key: '5' },
+  matcolor: { name: 'Materyal Renkleri', sub: 'Rastgele', icon: 'palette', key: '7' },
   normals: { name: 'Normaller', sub: 'Teknik', icon: 'modeTech', key: '6' },
   uv: { name: 'UV Dama', sub: 'Teknik', icon: 'modeTech', key: '6' },
   vcolor: { name: 'Vertex Rengi', sub: 'Teknik', icon: 'modeTech', key: '6' },
@@ -121,6 +122,9 @@ export class ShadingManager extends EventTarget {
       uvRepeat: 4,
       textures: true,
       doubleSided: true,
+      matColorBy: 'material',   // 'material' | 'object'
+      matColorSeed: 0,
+      autoMatColors: true,      // dokusuz modeller açılınca otomatik uygula
     };
     this.meshes = [];
     this.root = null;
@@ -139,6 +143,7 @@ export class ShadingManager extends EventTarget {
     this.vcolorMat = shared(new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
     this.noVColorMat = shared(new THREE.MeshBasicMaterial({ color: '#808080', side: THREE.DoubleSide }));
     this.unlitCache = new Map();
+    this.matColorCache = new Map();
     this.normalHelpers = [];
     viewer.addEventListener('placement', () => this.normalHelpers.forEach(hp => hp.update()));
   }
@@ -160,6 +165,8 @@ export class ShadingManager extends EventTarget {
     this._clearNormalHelpers();
     this.unlitCache.forEach(m => m.dispose());
     this.unlitCache.clear();
+    this.matColorCache.forEach(m => m.dispose());
+    this.matColorCache.clear();
     this.root = root;
     this.meshes = [];
     if (root) {
@@ -242,7 +249,14 @@ export class ShadingManager extends EventTarget {
   }
 
   get litMode() {
-    return this.mode === 'lit' || this.mode === 'litwire' || (this.mode === 'clay' && this.settings.clayStyle === 'lit');
+    return this.mode === 'lit' || this.mode === 'litwire' || this.mode === 'matcolor'
+      || (this.mode === 'clay' && this.settings.clayStyle === 'lit');
+  }
+
+  /** Materyal renkleri modunda yeni rastgele renkler üretir. */
+  reroll() {
+    this.settings.matColorSeed = (this.settings.matColorSeed + 1 + Math.floor(Math.random() * 97)) % 100000;
+    this.apply();
   }
 
   set(key, value) {
@@ -278,6 +292,7 @@ export class ShadingManager extends EventTarget {
       if (m.flatShading !== s.normalsFlat) { m.flatShading = s.normalsFlat; m.needsUpdate = true; }
     }
     this.checker.repeat.set(s.uvRepeat, s.uvRepeat);
+    this._indexColors();
 
     const overlay = mode === 'litwire' || mode === 'wire';
     for (const mesh of this.meshes) {
@@ -303,6 +318,10 @@ export class ShadingManager extends EventTarget {
         return map(m => this._unlit(m));
       case 'clay':
         return map(() => (this.settings.clayStyle === 'lit' ? this.clayMat : this.matcapMat));
+      case 'matcolor':
+        return this.settings.matColorBy === 'object'
+          ? map(() => this._colorMaterial(mesh, this._colorIndex.get(mesh) ?? 0))
+          : map(m => this._colorMaterial(m, this._colorIndex.get(m) ?? 0));
       case 'normals':
         return map(() => this.normalMat);
       case 'uv':
@@ -312,6 +331,39 @@ export class ShadingManager extends EventTarget {
       default:
         return orig;
     }
+  }
+
+  /** Parça veya materyal başına sıra numarası (renkler bu sıraya göre dağıtılır). */
+  _indexColors() {
+    this._colorIndex = new Map();
+    this.materials().forEach((m, i) => this._colorIndex.set(m, i));
+    this.meshes.forEach((m, i) => this._colorIndex.set(m, i));
+  }
+
+  _distinctColor(i) {
+    // altın oran adımlarıyla birbirinden ayrışan tonlar; tohum her "yeni renkler"de kaydırır
+    const seed = this.settings.matColorSeed;
+    const hue = (i * 0.618033988749895 + seed * 0.3819660112501051) % 1;
+    const sat = 0.5 + 0.2 * (((i + seed) * 7) % 3) / 2;
+    const light = 0.5 + 0.1 * (((i + seed) * 5) % 3) / 2;
+    return new THREE.Color().setHSL(hue, sat, light);
+  }
+
+  _colorMaterial(key, i) {
+    let m = this.matColorCache.get(key);
+    if (!m) {
+      m = new THREE.MeshStandardMaterial({ roughness: 0.55, metalness: 0, envMapIntensity: 0.5 });
+      m.name = `${key.name || 'parça'} (renk)`;
+      this.matColorCache.set(key, m);
+    }
+    m.color.copy(this._distinctColor(i));
+    const side = this.settings.doubleSided ? THREE.DoubleSide : THREE.FrontSide;
+    if (m.side !== side || m.flatShading !== this.settings.normalsFlat) {
+      m.side = side;
+      m.flatShading = this.settings.normalsFlat;
+      m.needsUpdate = true;
+    }
+    return m;
   }
 
   _unlit(m) {

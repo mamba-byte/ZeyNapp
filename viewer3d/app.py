@@ -18,7 +18,7 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog=APP_ID, description=APP_NAME)
     p.add_argument('file', nargs='?', help='Açılacak model dosyası')
     p.add_argument('--capture', metavar='PNG', help='Modeli yükle, ekran görüntüsünü kaydet ve çık')
-    p.add_argument('--shading', metavar='MOD', help='Başlangıç gölgelendirme modu (lit, litwire, wire, unlit, clay, normals, uv, vcolor)')
+    p.add_argument('--shading', metavar='MOD', help='Başlangıç gölgelendirme modu (lit, litwire, wire, unlit, clay, matcolor, normals, uv, vcolor)')
     p.add_argument('--profile', metavar='AD', help='Ayrı bir ayar profili kullan (ör. test veya sunum için)')
     p.add_argument('--software-gl', action='store_true', help='GPU sorunlarında yazılımsal (SwiftShader) WebGL kullan')
     p.add_argument('--render-mode', choices=RENDER_MODES, help='Görüntüleme motoru: auto (GPU) veya software (yazılımsal)')

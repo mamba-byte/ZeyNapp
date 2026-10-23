@@ -55,7 +55,7 @@ svg.icon { display: block; flex: none; }
 .hud-bottom-left {
   left: 12px; bottom: 12px; padding: 5px 10px; border-radius: 6px;
   background: rgba(16, 18, 22, .62); color: var(--text-2); font-size: 12px;
-  backdrop-filter: blur(8px); max-width: 60%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  backdrop-filter: blur(8px); max-width: calc(100% - 160px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   pointer-events: none;
 }
 .hud-bottom-left b { color: var(--text); font-weight: 600; }

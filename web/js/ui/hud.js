@@ -31,6 +31,11 @@ export class Hud {
       onclick: () => app.command('toggle', 'textures'),
     }, icon('image', 19));
     bar.append(this.texButton);
+    this.colorButton = h('button', {
+      class: 'tool-btn', 'data-tip': 'Materyallere rastgele renk ver (tekrar tıkla: yeni renkler)', 'data-key': '7',
+      onclick: () => app.command('materialColors'),
+    }, icon('palette', 19), h('span', { class: 'key', text: '7' }));
+    bar.append(this.colorButton);
 
     const right = document.getElementById('view-toolbar');
     const vbtn = (ic, tip, key, cmd, arg) => {
@@ -58,6 +63,7 @@ export class Hud {
 
   syncMode(mode) {
     for (const [m, b] of this.modeButtons) b.classList.toggle('active', m === mode);
+    this.colorButton?.classList.toggle('active', mode === 'matcolor');
     const tech = TECHNICAL_MODES.includes(mode);
     this.techButton.classList.toggle('active', tech);
     if (tech) this.techButton.dataset.tip = `Teknik: ${MODE_INFO[mode].name} (6 ile değiştir)`;
@@ -133,6 +139,7 @@ export class Hud {
       const rows = [
         ['Gölgelendirme modları', ['1', '~ – ', '6']],
         ['Teknik modlar arasında geçiş', ['6', '~ (tekrar basın)']],
+        ['Rastgele materyal renkleri / yeni renkler', ['7']],
         ['Kamerayı sıfırla / sığdır', ['F', '~ veya ', 'Home']],
         ['Seçili parçaya odaklan', ['.', '~ veya çift tık']],
         ['Döndür', ['~Sol fare tuşu ile sürükle']],
@@ -147,7 +154,9 @@ export class Hud {
         ['Sağ panel', ['N']],
         ['Animasyon oynat / duraklat', ['Boşluk']],
         ['Animasyonda kare adımı', ['←', '~ / ', '→']],
-        ['Seçiliyi gizle / yalıt / tümünü göster', ['H', '~ / ', 'I', '~ / ', 'U']],
+        ['Seçiliyi gizle', ['H']],
+        ['Seçili dışındakileri gizle', ['Shift', '~ + ', 'H']],
+        ['Gizlenenleri geri getir', ['Alt', '~ + ', 'H']],
         ['Seçimi temizle', ['Esc']],
         ['Model aç', ['Ctrl+O']],
         ['Yeniden yükle', ['F5']],

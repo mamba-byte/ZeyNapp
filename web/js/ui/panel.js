@@ -7,6 +7,7 @@ import { THEMES, BG_PRESETS } from '../themes.js';
 import { MODE_INFO, MODES, materialsOf } from '../shading.js';
 import { MATCAP_PRESETS } from '../textures.js';
 import { triangleCount } from '../stats.js';
+import { makeSelectionGroup, selectionRoots } from '../viewer.js';
 
 const TABS = [
   { id: 'env', icon: 'sun', title: 'Ortam ve Aydınlatma' },
@@ -155,7 +156,12 @@ class EnvTab {
       autoRotate: flag('Otomatik döndür', 'autoRotate', 'R'),
     };
     this.rotSpeed = slider({ label: 'Dönüş hızı', min: 0.2, max: 12, step: 0.1, value: 2, format: v => v.toFixed(1), onInput: v => { app.viewer.controls.autoRotateSpeed = v; app.persist(); } });
-    sc.body.append(...Object.values(this.flags).map(f => f.el), this.rotSpeed.el,
+    this.openRot = select({
+      label: 'Açılışta döndür', value: '-90',
+      options: [['-90', 'X −90° (Z-yukarı)'], ['0', 'Döndürme yok'], ['90', 'X +90°']],
+      onChange: v => app.command('setOpenRotation', Number(v)),
+    });
+    sc.body.append(...Object.values(this.flags).map(f => f.el), this.rotSpeed.el, this.openRot.el,
       h('div', { class: 'hint' }, 'Izgara hücresi: ', this.cellInfo = h('span', { text: '—' })));
     this.el.append(sc.el);
   }
@@ -220,6 +226,7 @@ class EnvTab {
     const f = this.app.viewer.flags;
     for (const [k, t] of Object.entries(this.flags)) t.set(f[k]);
     this.rotSpeed.set(this.app.viewer.controls.autoRotateSpeed);
+    this.openRot.set(String(this.app.openRotation ?? -90));
     const cell = this.app.viewer.gridCell;
     this.cellInfo.textContent = cell ? `${cell.toLocaleString('tr-TR', { maximumSignificantDigits: 3 })} birim (kalın çizgi: ×10)` : '—';
   }
@@ -248,13 +255,24 @@ class SceneTab {
     search.addEventListener('input', () => { this.filter = search.value.trim().toLocaleLowerCase('tr'); this.renderTree(); });
     search.addEventListener('keydown', e => e.stopPropagation());
     this.tree = h('div', { class: 'tree' });
+    this.grouping = 'hierarchy';
+    this.groupingSeg = segmented({
+      options: [
+        ['hierarchy', 'Hiyerarşi', null, 'Dosyadaki klasör / üst nesne yapısı'],
+        ['material', 'Materyal', null, 'Aynı materyali kullanan parçalar bir klasörde'],
+        ['name', 'Ad', null, 'Benzer adlı parçalar bir klasörde (ör. Plane.001, Plane.002 → Plane)'],
+      ],
+      value: 'hierarchy',
+      onChange: v => { this.setGrouping(v); app.persist(); },
+    });
     tr.body.append(
+      this.groupingSeg.el,
       h('div', { class: 'search' }, icon('search', 15), search),
       h('div', { class: 'btn-row' },
-        button('Tümünü göster', { icon: 'eye', cls: 'btn-sm', onClick: () => app.command('showAll') }),
-        button('Seçiliyi yalıt', { icon: 'focus', cls: 'btn-sm', onClick: () => app.command('isolateSelected') })),
+        button('Tümünü göster', { icon: 'eye', cls: 'btn-sm', tip: 'Gizlenenleri geri getir (Alt+H)', onClick: () => app.command('showAll') }),
+        button('Diğerlerini gizle', { icon: 'focus', cls: 'btn-sm', tip: 'Seçili dışındakileri gizle (Shift+H)', onClick: () => app.command('isolateSelected') })),
       this.tree,
-      h('div', { class: 'hint', text: 'Satıra tıklayarak seçin, çift tıklayarak odaklanın. Göz ikonu parçayı gizler/gösterir.' }));
+      h('div', { class: 'hint', text: 'Satıra tıklayarak seçin, çift tıklayarak odaklanın. Klasör satırı tüm grubu seçer. H gizler, Shift+H diğerlerini gizler, Alt+H hepsini geri getirir.' }));
     this.el.append(tr.el);
     this.setStats(null);
   }
@@ -305,95 +323,176 @@ class SceneTab {
   buildTree(root) {
     this.root = root;
     this.collapsed.clear();
-    this.meta = new Map();
-    if (root) {
-      let total = 0;
+    this._buildNodes();
+    this.renderTree();
+  }
+
+  setGrouping(mode) {
+    if (!['hierarchy', 'material', 'name'].includes(mode)) return;
+    this.grouping = mode;
+    this.groupingSeg.set(mode);
+    this.collapsed.clear();
+    this._buildNodes();
+    this.renderTree();
+  }
+
+  /**
+   * Ağaç düğümleri: { key, label, kind, object, children, tris, count }.
+   * object bir Object3D ya da sanal grup (materyale / ada göre klasör) olabilir.
+   */
+  _buildNodes() {
+    this.nodes = [];
+    this.parentOf = new Map();
+    this.nodesOf = new Map();
+    const root = this.root;
+    if (!root) return;
+    const kindOf = o => (o.isSkinnedMesh ? 'skinned' : o.isMesh ? 'mesh' : o.isPoints ? 'points' : 'group');
+    const leaf = o => ({ key: o.uuid, label: o.name || o.type, kind: kindOf(o), object: o, children: [], tris: triangleCount(o) });
+    const drawable = o => (o.isMesh || o.isPoints || o.isLine) && !o.userData.isOverlay;
+
+    if (this.grouping === 'hierarchy') {
       const visit = o => {
         if (o.userData.isOverlay || o.isBone || o.isLight || o.isCamera) return null;
         const kids = o.children.map(visit).filter(Boolean);
-        const drawable = o.isMesh || o.isPoints || o.isLine;
-        if (!drawable && kids.length === 0) return null;
-        total++;
-        const tris = triangleCount(o) + kids.reduce((a, k) => a + this.meta.get(k).tris, 0);
-        this.meta.set(o, { kids, tris });
-        return o;
+        if (!drawable(o) && kids.length === 0) return null;
+        const tris = triangleCount(o) + kids.reduce((a, k) => a + k.tris, 0);
+        return { key: o.uuid, label: o.name || o.type, kind: drawable(o) ? kindOf(o) : 'group', object: o, children: kids, tris };
       };
-      visit(root);
-      if (total > 150) {
-        for (const [o, m] of this.meta) if (o !== root && m.kids.length) this.collapsed.add(o);
+      const top = visit(root);
+      if (top) this.nodes.push(top);
+    } else {
+      const meshes = [];
+      root.traverse(o => { if (drawable(o)) meshes.push(o); });
+      const groups = new Map();
+      const add = (key, label, mesh, material) => {
+        if (!groups.has(key)) groups.set(key, { label, material, members: [] });
+        const g = groups.get(key);
+        if (!g.members.includes(mesh)) g.members.push(mesh);
+      };
+      for (const mesh of meshes) {
+        if (this.grouping === 'material') {
+          for (const mat of materialsOf(mesh.userData.origMaterial || mesh.material)) add(mat.uuid, mat.name || 'İsimsiz materyal', mesh, mat);
+        } else {
+          const name = mesh.name || mesh.type;
+          const base = name.replace(/[._\s-]*\(?\d+\)?$/, '') || name;
+          add(base.toLocaleLowerCase('tr'), base, mesh);
+        }
+      }
+      const collator = new Intl.Collator('tr', { numeric: true, sensitivity: 'base' });
+      const sorted = [...groups.entries()].sort((a, b) => collator.compare(a[1].label, b[1].label));
+      for (const [key, g] of sorted) {
+        if (this.grouping === 'name' && g.members.length === 1) {
+          this.nodes.push(leaf(g.members[0]));
+          continue;
+        }
+        const children = g.members.sort((a, b) => collator.compare(a.name || '', b.name || '')).map(leaf);
+        const object = makeSelectionGroup(g.label, g.members, this.grouping);
+        if (g.material) object.material = g.material;
+        this.nodes.push({
+          key: `g:${key}`, label: g.label, kind: this.grouping === 'material' ? 'palette' : 'group', object, children,
+          tris: children.reduce((a, c) => a + c.tris, 0), count: children.length,
+        });
       }
     }
-    this.renderTree();
+
+    let total = 0;
+    const index = (node, parent) => {
+      total++;
+      if (parent) this.parentOf.set(node.key, parent);
+      if (!this.nodesOf.has(node.object)) this.nodesOf.set(node.object, []);
+      this.nodesOf.get(node.object).push(node);
+      node.children.forEach(c => index(c, node));
+    };
+    this.nodes.forEach(n => index(n, null));
+    // kalabalık sahnelerde klasörleri kapalı başlat
+    if (total > 150) {
+      const collapse = (node, depth) => {
+        if (node.children.length && (depth > 0 || this.grouping !== 'hierarchy')) this.collapsed.add(node.key);
+        node.children.forEach(c => collapse(c, depth + 1));
+      };
+      this.nodes.forEach(n => collapse(n, 0));
+    }
+  }
+
+  _isVisible(obj) {
+    return obj.isSelectionGroup ? obj.members.some(m => m.visible) : obj.visible;
   }
 
   renderTree() {
     this.tree.innerHTML = '';
-    this.rows.clear();
-    const root = this.root;
-    if (!root || !this.meta.has(root)) {
+    this.rows = new Map();
+    if (!this.root || !this.nodes?.length) {
       this.tree.append(h('div', { class: 'tree-empty', text: 'Model yüklü değil.' }));
       return;
     }
     const q = this.filter;
     const matches = new Map();
-    const test = o => {
-      const m = this.meta.get(o);
-      const self = !q || (o.name || '').toLocaleLowerCase('tr').includes(q);
-      const any = m.kids.map(test).some(Boolean) || self;
-      matches.set(o, { self, any });
+    const test = node => {
+      const self = !q || node.label.toLocaleLowerCase('tr').includes(q);
+      const any = node.children.map(test).some(Boolean) || self;
+      matches.set(node, any);
       return any;
     };
-    test(root);
+    this.nodes.forEach(test);
+    const selection = this.app.viewer.selection;
     const frag = document.createDocumentFragment();
-    const add = (o, depth) => {
-      const m = this.meta.get(o);
-      const mt = matches.get(o);
-      if (!mt.any) return;
-      const open = q ? true : !this.collapsed.has(o);
-      const kind = o.isSkinnedMesh ? 'skinned' : o.isMesh ? 'mesh' : o.isPoints ? 'points' : 'group';
-      const caret = m.kids.length
-        ? h('span', { class: `caret${open ? ' open' : ''}`, onclick: e => { e.stopPropagation(); this.toggleCollapse(o); } }, icon('chevRight', 12))
+    const add = (node, depth) => {
+      if (!matches.get(node)) return;
+      const o = node.object;
+      const open = q ? true : !this.collapsed.has(node.key);
+      const visible = this._isVisible(o);
+      const caret = node.children.length
+        ? h('span', { class: `caret${open ? ' open' : ''}`, onclick: e => { e.stopPropagation(); this.toggleCollapse(node.key); } }, icon('chevRight', 12))
         : h('span', { class: 'caret' });
-      const eye = h('button', { class: 'tree-eye', 'data-tip': 'Gizle / göster', onclick: e => { e.stopPropagation(); this.app.command('setVisible', { object: o, visible: !o.visible }); } },
-        icon(o.visible ? 'eye' : 'eyeOff', 15));
+      const eye = h('button', {
+        class: 'tree-eye', 'data-tip': 'Gizle / göster',
+        onclick: e => { e.stopPropagation(); this.app.command('setVisible', { object: o, visible: !this._isVisible(o) }); },
+      }, icon(visible ? 'eye' : 'eyeOff', 15));
+      const meta = node.count ? `${node.count} · ${fmtShort(node.tris)}` : (node.tris ? fmtShort(node.tris) : '');
       const r = h('div', {
-        class: `tree-row${o === this.app.viewer.selection ? ' selected' : ''}${o.visible ? '' : ' hidden-obj'}`,
+        class: `tree-row${o === selection ? ' selected' : ''}${visible ? '' : ' hidden-obj'}`,
         style: { paddingLeft: `${4 + depth * 14}px` },
         onclick: () => this.app.command('select', o),
         ondblclick: () => this.app.command('focusObject', o),
-      }, caret, h('span', { class: 'kind' }, icon(kind, 14)), h('span', { class: 'tree-name', text: o.name || o.type, title: o.name || o.type }),
-      m.tris ? h('span', { class: 'tree-meta', text: fmtShort(m.tris) }) : null, eye);
+      }, caret, h('span', { class: 'kind' }, icon(node.kind, 14)), h('span', { class: 'tree-name', text: node.label, title: node.label }),
+      meta ? h('span', { class: 'tree-meta', text: meta }) : null, eye);
       frag.append(r);
-      this.rows.set(o, r);
-      if (open) m.kids.forEach(k => add(k, depth + 1));
+      if (!this.rows.has(o)) this.rows.set(o, []);
+      this.rows.get(o).push(r);
+      if (open) node.children.forEach(c => add(c, depth + 1));
     };
-    add(root, 0);
+    this.nodes.forEach(n => add(n, 0));
     this.tree.append(frag);
     if (!this.rows.size) this.tree.append(h('div', { class: 'tree-empty', text: 'Eşleşen parça yok.' }));
   }
 
-  toggleCollapse(o) {
-    if (this.collapsed.has(o)) this.collapsed.delete(o); else this.collapsed.add(o);
+  toggleCollapse(key) {
+    if (this.collapsed.has(key)) this.collapsed.delete(key); else this.collapsed.add(key);
     this.renderTree();
   }
 
   setSelected(obj) {
-    if (obj) {
-      // seçili öğenin üst düğümlerini aç
+    if (obj && this.nodesOf) {
+      // seçili öğeyi içeren kapalı klasörleri aç
       let changed = false;
-      for (let p = obj.parent; p; p = p.parent) if (this.collapsed.delete(p)) changed = true;
-      if (changed || (!this.rows.has(obj) && this.meta?.has(obj))) this.renderTree();
+      for (const node of this.nodesOf.get(obj) || []) {
+        for (let p = this.parentOf.get(node.key); p; p = this.parentOf.get(p.key)) if (this.collapsed.delete(p.key)) changed = true;
+      }
+      if (changed) this.renderTree();
     }
-    for (const [o, r] of this.rows) r.classList.toggle('selected', o === obj);
-    this.rows.get(obj)?.scrollIntoView({ block: 'nearest' });
+    for (const [o, rows] of this.rows) rows.forEach(r => r.classList.toggle('selected', o === obj));
+    this.rows.get(obj)?.[0]?.scrollIntoView({ block: 'nearest' });
   }
 
   refreshVisibility() {
-    for (const [o, r] of this.rows) {
-      r.classList.toggle('hidden-obj', !o.visible);
-      const eye = r.querySelector('.tree-eye');
-      eye.innerHTML = '';
-      eye.append(icon(o.visible ? 'eye' : 'eyeOff', 15));
+    for (const [o, rows] of this.rows) {
+      const visible = this._isVisible(o);
+      for (const r of rows) {
+        r.classList.toggle('hidden-obj', !visible);
+        const eye = r.querySelector('.tree-eye');
+        eye.innerHTML = '';
+        eye.append(icon(visible ? 'eye' : 'eyeOff', 15));
+      }
     }
   }
 }
@@ -501,6 +600,23 @@ class ShadingTab {
     clay.body.append(chips, this.clayColor.el, h('div', { class: 'hint', text: 'Dokular devre dışı bırakılır; yalnızca yüzey formu ve topoloji incelenir.' }));
     this.el.append(clay.el);
 
+    // --- rastgele materyal renkleri
+    const mc = section('Materyal Renkleri');
+    this.matColorBy = segmented({
+      options: [['material', 'Materyale göre'], ['object', 'Parçaya göre']],
+      value: sh.settings.matColorBy,
+      onChange: v => { sh.set('matColorBy', v); if (sh.mode !== 'matcolor') app.command('materialColors'); },
+    });
+    this.autoMatColors = toggle({
+      label: 'Dokusuz modellerde açılışta uygula', value: sh.settings.autoMatColors,
+      onChange: v => { sh.set('autoMatColors', v); app.persist(); },
+    });
+    mc.body.append(this.matColorBy.el,
+      h('div', { class: 'btn-row' }, button('Yeni rastgele renkler', { icon: 'palette', cls: 'btn-sm', tip: 'Kısayol: 7', onClick: () => app.command('materialColors') })),
+      this.autoMatColors.el,
+      h('div', { class: 'hint', text: 'Her materyale (veya parçaya) ayırt edilebilir bir renk verir; dosyadaki materyaller değişmez. 1 tuşu ile asıl görünüme dönün.' }));
+    this.el.append(mc.el);
+
     // --- teknik
     const tech = section('Teknik İnceleme');
     this.techSeg = segmented({
@@ -556,6 +672,8 @@ class ShadingTab {
     this.normalLen.set(s.normalLength);
     this.uvRepeat.set(s.uvRepeat);
     this.textures.set(s.textures);
+    this.matColorBy.set(s.matColorBy);
+    this.autoMatColors.set(s.autoMatColors);
   }
 
   /* -------------------------------------------------------- materials */
@@ -661,13 +779,41 @@ class ShadingTab {
   }
 
   /* ------------------------------------------------------------- UV */
+  _drawUVAxes(ctx, W) {
+    const pad = 10;
+    const pill = (text, x, y, align) => {
+      ctx.font = '600 22px "Segoe UI", Arial, sans-serif';
+      const w = ctx.measureText(text).width + 14;
+      const bx = align === 'right' ? x - w : x;
+      ctx.fillStyle = 'rgba(12,14,18,0.78)';
+      ctx.beginPath();
+      ctx.roundRect(bx, y - 15, w, 30, 7);
+      ctx.fill();
+      ctx.fillStyle = '#e8ebf0';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(text, bx + 7, y + 1);
+    };
+    pill('+U →', W - pad, W - pad - 15, 'right');
+    pill('+V ↑', pad, pad + 15, 'left');
+    pill('0,0', pad, W - pad - 15, 'left');
+    pill('1,1', W - pad, pad + 15, 'right');
+  }
+
   drawUV() {
     const cv = this.uvCanvas;
     const ctx = cv.getContext('2d');
     const W = cv.width;
     ctx.fillStyle = '#15171b';
     ctx.fillRect(0, 0, W, W);
-    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    // modeldeki dama dokusunun aynısı soluk arka plan olarak (hangi UV bölgesine düştüğünü görmek için)
+    const checker = this.app.shading.checker?.image;
+    if (checker) {
+      ctx.globalAlpha = 0.28;
+      ctx.drawImage(checker, 0, 0, W, W);
+      ctx.globalAlpha = 1;
+    }
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
     ctx.lineWidth = 1;
     for (let i = 0; i <= 8; i++) {
       const p = Math.round((i / 8) * (W - 1)) + 0.5;
@@ -676,8 +822,9 @@ class ShadingTab {
     }
     const sel = this.app.viewer.selection;
     const meshes = [];
-    if (sel) sel.traverse(o => { if (o.isMesh && !o.userData.isOverlay) meshes.push(o); });
+    for (const root of selectionRoots(sel)) root.traverse(o => { if (o.isMesh && !o.userData.isOverlay) meshes.push(o); });
     if (!meshes.length) {
+      this._drawUVAxes(ctx, W);
       this.uvCaption.textContent = 'UV yerleşimi: sahneden bir parça seçin.';
       return;
     }
@@ -707,6 +854,7 @@ class ShadingTab {
       }
     }
     ctx.stroke();
+    this._drawUVAxes(ctx, W);
     this.uvCaption.textContent = withUV
       ? `${sel.name || 'Seçili parça'} — ${fmtNum(tris)} üçgen çizildi (0–1 UV alanı).`
       : `${sel.name || 'Seçili parça'} — UV koordinatı yok.`;

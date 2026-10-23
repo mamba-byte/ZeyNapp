@@ -34,6 +34,7 @@ SHADING_MODES = [
     ('wire', 'Tel Kafes (Unlit Wireframe)', '3'),
     ('unlit', 'Işıksız / Albedo (Unlit)', '4'),
     ('clay', 'Kil / Matcap', '5'),
+    ('matcolor', 'Rastgele Materyal Renkleri', '7'),
 ]
 TECHNICAL_MODES = [
     ('normals', 'Normal Haritası'),
@@ -256,8 +257,9 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         self._action(m, 'Seçimi Temizle', partial(js, 'clearSelection'), hint='Esc', needs_model=True)
         self._action(m, 'Seçili Parçayı Gizle', partial(js, 'hideSelected'), hint='H', needs_model=True)
-        self._action(m, 'Seçili Parçayı Yalıt', partial(js, 'isolateSelected'), hint='I', needs_model=True)
-        self._action(m, 'Tüm Parçaları Göster', partial(js, 'showAll'), hint='U', needs_model=True)
+        self._action(m, 'Seçili Dışındakileri Gizle', partial(js, 'isolateSelected'), hint='Shift+H', needs_model=True)
+        # Blender'daki gibi Alt+H: gerçek Qt kısayolu (web görünümü odaktayken de çalışır)
+        self._action(m, 'Gizlenenleri Geri Getir', partial(js, 'showAll'), 'Alt+H', needs_model=True)
 
         m = mb.addMenu('&Görüntüle')
         self.shading_group = QActionGroup(self)
@@ -293,7 +295,11 @@ class MainWindow(QMainWindow):
                                  ('y', 90, 'Y ekseninde +90°'), ('z', 90, 'Z ekseninde +90°')):
             self._action(rot, label, partial(js, 'rotateModel', {'axis': axis, 'deg': deg}), needs_model=True)
         rot.addSeparator()
-        self._action(rot, 'Döndürmeyi Sıfırla', partial(js, 'rotateModel', {'reset': True}), needs_model=True)
+        self._action(rot, 'Açılış Yönüne Döndür', partial(js, 'rotateModel', {'reset': True}), needs_model=True)
+        open_rot = m.addMenu('Açılışta Döndür')
+        self.open_rot_group = QActionGroup(self)
+        for deg, label in ((-90, 'X ekseninde −90° (Z-yukarı modeller)'), (0, 'Döndürme yok'), (90, 'X ekseninde +90°')):
+            self._action(open_rot, label, partial(js, 'setOpenRotation', deg), group=self.open_rot_group, data=deg)
         self._action(m, 'Otomatik Döndür (Turntable)', partial(js, 'toggle', 'autoRotate'), hint='R',
                      state_key='autoRotate')
         self._action(m, 'Dokuları Göster', partial(js, 'toggle', 'textures'), hint='T', state_key='textures')
@@ -334,6 +340,9 @@ class MainWindow(QMainWindow):
         if 'theme' in state:
             for act in self.theme_group.actions():
                 act.setChecked(act.data() == state['theme'])
+        if 'openRotation' in state:
+            for act in self.open_rot_group.actions():
+                act.setChecked(act.data() == state['openRotation'])
         if 'hasModel' in state:
             self._update_model_actions(bool(state['hasModel']))
             name = state.get('modelName') if state['hasModel'] else None

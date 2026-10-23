@@ -1,7 +1,7 @@
 // Uygulama: bileşenleri bağlar, komutları (menü / kısayol / panel) yürütür
 import * as THREE from 'three';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
-import { Viewer } from './viewer.js';
+import { Viewer, selectionRoots } from './viewer.js';
 import { ModelLoader, createServerSource, createFileMapSource, formatName, MODEL_EXTS, IMAGE_EXTS } from './loader.js';
 import { ShadingManager, materialsOf, TECHNICAL_MODES } from './shading.js';
 import { EnvironmentManager, renderThemeThumbnails } from './environment.js';
@@ -46,6 +46,8 @@ class App {
     this._persistTimer = 0;
     this._stateTimer = 0;
     this._pendingTexture = null;
+    this.openRotation = -90; // açılışta X ekseninde döndürme (Z-yukarı modeller için)
+    this._autoMatColor = false;
   }
 
   async init() {
@@ -175,6 +177,16 @@ class App {
       case 'closeModel': return this.closeModel();
       case 'setShading': return this.shading.setMode(p);
       case 'cycleTechnical': return this.shading.cycleTechnical();
+      case 'materialColors':
+        this._autoMatColor = false;
+        if (this.shading.mode === 'matcolor') this.shading.reroll(); else this.shading.setMode('matcolor');
+        return undefined;
+      case 'setOpenRotation':
+        this.openRotation = Number(p) || 0;
+        if (this.viewer.model) { this.viewer.setBaseRotation(this.openRotation); this._refreshStats(); }
+        this.panel.env.syncFlags();
+        this.reportState();
+        return this.persist();
       case 'toggle': return this.toggle(p);
       case 'setFlag': return this.setFlag(p.name, p.value);
       case 'setTextures': return this.shading.set('textures', !!p);
@@ -285,8 +297,9 @@ class App {
     this.source?.dispose();
     this.source = source;
     this.format = source.ext;
-    this.viewer.setModel(object);
-    this.rawBox = this.viewer.box.clone().translate(this.viewer.modelWrapper.position.clone().negate());
+    object.updateMatrixWorld(true);
+    this.rawBox = new THREE.Box3().setFromObject(object); // dosya koordinatlarında (döndürmeden önce)
+    this.viewer.setModel(object, { rotateX: this.openRotation });
     this.shading.setModel(object);
     this.env.setModel(object);
     this.anim.setModel(object, animations);
@@ -297,6 +310,15 @@ class App {
     this.panel.scene.buildTree(object);
     this.panel.shading.syncMaterials();
     this._refreshStats(true);
+    // dokusuz (düz beyaz/gri) modellerde parçaları ayırt etmek için rastgele materyal renkleri
+    const untextured = this.stats.textures === 0 && this.stats.meshes > 0;
+    if (this.shading.settings.autoMatColors && untextured && this.shading.mode === 'lit') {
+      this.shading.setMode('matcolor');
+      this._autoMatColor = true;
+    } else if (this._autoMatColor && !untextured && this.shading.mode === 'matcolor') {
+      this.shading.setMode('lit');
+      this._autoMatColor = false;
+    }
 
     for (const w of warnings) this.hud.toast(w, 'warn', 5000);
     if (missing.length) {
@@ -357,7 +379,7 @@ class App {
   _updateBadge() {
     if (!this.viewer.model || !this.stats) { this.hud.setBadge(''); return; }
     const sel = this.viewer.selection;
-    let html = `<b>${escapeHtml(this.modelInfo?.name || '')}</b> · ${fmtShort(this.stats.triangles)} üçgen · ${this.stats.meshes} parça`;
+    let html = `<b>${escapeHtml(this.modelInfo?.name || '')}</b> · ${fmtShort(this.stats.triangles)} üçgen · ${this.stats.meshes} parça · ${this.stats.materials} materyal`;
     if (sel) html += ` · Seçili: <b>${escapeHtml(sel.name || sel.type)}</b>`;
     this.hud.setBadge(html);
   }
@@ -368,9 +390,14 @@ class App {
     this.viewer.setSelection(obj || null);
     this.panel.scene.setSelected(obj || null);
     if (obj) {
-      const mats = materialsOf(obj.userData.origMaterial || obj.material);
-      const m = material || mats[0];
-      if (m && this.shading.materials().includes(m)) this.panel.shading.selectMaterial(m);
+      // materyal grubu seçildiyse o materyal; değilse seçimdeki ilk parçanın materyali
+      let m = material || (obj.isSelectionGroup ? obj.material : null);
+      if (!m) {
+        let mesh = null;
+        for (const r of selectionRoots(obj)) r.traverse(o => { if (!mesh && o.isMesh && !o.userData.isOverlay) mesh = o; });
+        if (mesh) m = materialsOf(mesh.userData.origMaterial || mesh.material)[0];
+      }
+      if (m?.isMaterial && this.shading.materials().includes(m)) this.panel.shading.selectMaterial(m);
     }
     if (this.panel.current === 'shading') this.panel.shading.drawUV();
     this._updateBadge();
@@ -378,7 +405,7 @@ class App {
   }
 
   setVisible(obj, visible) {
-    obj.visible = visible;
+    for (const r of selectionRoots(obj)) r.visible = visible;
     this._afterVisibility();
   }
 
@@ -390,13 +417,14 @@ class App {
   isolateSelected() {
     const sel = this.viewer.selection;
     if (!sel || !this.viewer.model) { this.hud.toast('Önce bir parça seçin.', 'warn', 2000); return; }
-    const inSel = o => { for (let p = o; p; p = p.parent) if (p === sel) return true; return false; };
+    const roots = new Set(selectionRoots(sel));
+    const inSel = o => { for (let p = o; p; p = p.parent) if (roots.has(p)) return true; return false; };
     this.viewer.model.traverse(o => {
       if (o.userData.isOverlay || o.isLight) return;
       if (o.isMesh || o.isPoints || o.isLine) o.visible = inSel(o);
       else o.visible = true;
     });
-    for (let p = sel; p; p = p.parent) p.visible = true;
+    for (const r of roots) for (let p = r; p; p = p.parent) p.visible = true;
     this._afterVisibility();
   }
 
@@ -526,8 +554,9 @@ class App {
         bbox: this.viewer.flags.bbox,
         autoRotate: this.viewer.flags.autoRotate,
         autoRotateSpeed: this.viewer.controls.autoRotateSpeed,
+        openRotation: this.openRotation,
       },
-      ui: { panel: this.ui.panel, animBar: this.ui.animBar, tab: this.panel.current },
+      ui: { panel: this.ui.panel, animBar: this.ui.animBar, tab: this.panel.current, treeGrouping: this.panel.scene.grouping },
     };
   }
 
@@ -541,11 +570,13 @@ class App {
     if (s.view) {
       for (const k of ['grid', 'shadowCatcher', 'axes', 'bbox', 'autoRotate']) if (k in s.view) this.viewer.setFlag(k, !!s.view[k]);
       if (s.view.autoRotateSpeed) this.viewer.controls.autoRotateSpeed = s.view.autoRotateSpeed;
+      if ('openRotation' in s.view) this.openRotation = Number(s.view.openRotation) || 0;
     }
     if (s.ui) {
       if ('panel' in s.ui) this.ui.panel = !!s.ui.panel;
       if ('animBar' in s.ui) this.ui.animBar = !!s.ui.animBar;
       if (s.ui.tab) this.panel.show(s.ui.tab);
+      if (s.ui.treeGrouping) this.panel.scene.setGrouping(s.ui.treeGrouping);
     }
     this.env.applyShadows();
     this.syncAll();
@@ -589,6 +620,7 @@ class App {
         modelName: this.modelInfo?.name || '',
         shading: this.shading.mode,
         theme: this.env.state.theme,
+        openRotation: this.openRotation,
         grid: f.grid, shadowCatcher: f.shadowCatcher, axes: f.axes, bbox: f.bbox, autoRotate: f.autoRotate,
         ortho: f.ortho, textures: f.textures, panel: f.panel, animBar: f.animBar,
         normalLines: this.shading.settings.normalLines,
@@ -613,12 +645,16 @@ class App {
         if (k === 'c' && e.shiftKey) { e.preventDefault(); this.screenshot({ clipboard: true }); }
         return;
       }
+      // Blender gibi: H gizle, Shift+H seçili dışındakileri gizle, Alt+H hepsini geri getir
+      if (e.code === 'KeyH' && e.altKey && !e.shiftKey) { e.preventDefault(); this.command('showAll'); return; }
+      if (e.code === 'KeyH' && e.shiftKey && !e.altKey) { e.preventDefault(); this.command('isolateSelected'); return; }
       if (e.altKey) return;
       const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
       const modes = { 1: 'lit', 2: 'litwire', 3: 'wire', 4: 'unlit', 5: 'clay' };
       let handled = true;
       if (modes[k]) this.command('setShading', modes[k]);
       else if (k === '6') this.command('cycleTechnical');
+      else if (k === '7') this.command('materialColors');
       else if (k === 'f' || k === 'Home') this.command('resetCamera');
       else if (k === '.') this.command('focusSelection');
       else if (k === 'g') this.toggle('grid');

@@ -74,14 +74,18 @@ Komut satırı seçenekleri:
   gibi göreli yollar veya yanlış uzantılar; model klasörü, alt klasörleri (`textures`, `maps`, `*.fbm` …)
   ve üst klasör dosya adına göre taranarak çözülür. **TIF, PSD ve DDS** dokuları otomatik PNG'ye çevrilir.
 
-**Gölgelendirme modları** (üst araç çubuğu, sağ panel, *Görüntüle* menüsü veya `1–6` tuşları)
+**Gölgelendirme modları** (üst araç çubuğu, sağ panel, *Görüntüle* menüsü veya `1–7` tuşları)
 
 1. **Işıklı (Lit):** Işık, gölge, specular/shininess ve dokular dahil tam görünüm.
 2. **Işıklı tel kafes:** Dokulu yüzeyin üzerine derinlik ofsetli, keskin tel kafes. Çizgi rengi, kalınlığı (piksel) ve opaklığı ayarlanabilir.
 3. **Tel kafes (unlit):** Yalnızca üçgen kenarları. Gizli çizgiler kaldırılır, istenirse X-Ray ile tümü gösterilir.
 4. **Işıksız (Albedo):** Yalnızca ham doku ve taban rengi.
 5. **Kil / Matcap:** Işıklı kil ya da 6 matcap (gri kil, kırmızı mum, yeşim, ten, krom, altın).
-6. **Teknik:** Normal haritası (vertex/poligon normalleri, normal vektör çizgileri), UV dama testi ve UV yerleşim önizlemesi, vertex rengi.
+6. **Teknik:** Normal haritası (vertex/poligon normalleri, normal vektör çizgileri), UV dama testi, vertex rengi.
+   UV dama hücreleri A0–H7 etiketli ve ↑ oklu: ok aşağı bakıyorsa UV dikeyde ters, etiket aynalıysa yatayda
+   ters çevrilmiştir. Seçili parçanın UV yerleşimi panelde +U / +V yön işaretleriyle gösterilir.
+7. **Rastgele materyal renkleri:** Her materyale (veya parçaya) ayırt edilebilir bir renk verir; `7` ile her
+   basışta yeni renkler. Dokusuz modeller açılışta otomatik olarak bu modda gelir (panelden kapatılabilir).
 
 Tel kafes, barycentric koordinatlı özel bir gölgelendirici ile çizilir. Bu sayede kalınlık ayarı
 Windows'ta da çalışır ve katman iskelet/morph animasyonlarını birebir takip eder.
@@ -89,7 +93,8 @@ Windows'ta da çalışır ve katman iskelet/morph animasyonlarını birebir taki
 **Kamera:** Sol tık = yörünge, orta tık veya Shift+Sol = kaydırma, tekerlek veya sağ tık sürükle = yakınlaşma.
 Yakın/uzak kırpma düzlemleri model boyutuna göre dinamik ayarlanır. `F`/`Home` = ekrana sığdır.
 Standart görünümler ve ortografik kamera (`P`) desteklenir. Sağ alttaki eksen göstergesindeki bir eksene
-tıklayınca kamera o yöne döner.
+tıklayınca kamera o yöne döner. Modeller açılışta X ekseninde −90° döndürülür (Z-yukarı dışa aktarımlar
+için); *Araçlar › Açılışta Döndür* veya panelden değiştirilebilir.
 
 **Ortam ve aydınlatma:** Önizlemeli 3×3 tema ızgarası (9 tema). Düz, doğrusal, radyal veya ortam haritası
 arka planı ve hızlı arka plan önayarları. Güneş ikonlu 360° ışık kadranı (azimut ve yükseklik). Işık rengi
@@ -99,8 +104,12 @@ Gölge yakalayıcı zemin. *Ayarları kaydet / yükle* (JSON).
 **Materyal ve sahne:** Dokuları aç/kapat (`T`). Diffuse, specular, shininess/roughness, metalness,
 opaklık, emissive ve normal/bump etkisi kaydırıcıları. Doku değiştirme/kaldırma ve materyali sıfırlama.
 Bir `.png/.jpg/.tga` dosyasını modelin üzerine **sürükleyip bırakınca** doku o parçaya atanır.
-Sahne ağacında arama, parça gizleme/gösterme, yalıtma ve odaklanma yapılabilir. İstatistikler: benzersiz
-vertex, üçgen, kenar, materyal, doku, kemik, animasyon, BBoxMin/BBoxMax, boyutlar.
+Sahne ağacı üç şekilde gruplanabilir: **Hiyerarşi** (dosyadaki üst nesneler), **Materyal** (aynı materyali
+kullanan parçalar) ve **Ad** (`Plane.001`, `Plane.002` → *Plane* klasörü). Klasör satırına tıklamak tüm grubu seçer.
+Blender kısayolları: `H` seçiliyi gizle, `Shift+H` seçili dışındakileri gizle, `Alt+H` hepsini geri getir.
+(FBX, Blender koleksiyonlarını taşımaz; klasör yapısı için nesneleri bir Empty altına bağlayın ya da Materyal/Ad
+gruplamasını kullanın.) İstatistikler: benzersiz vertex, üçgen, kenar, materyal, doku, kemik, animasyon,
+BBoxMin/BBoxMax, boyutlar.
 
 **Animasyon çubuğu:** Oynat/duraklat (`Boşluk`), döngü, kare adımı (`←/→`), zaman çizelgesi,
 animasyon seçici, hız (×0.25 … ×2).

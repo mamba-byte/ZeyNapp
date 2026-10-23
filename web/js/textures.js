@@ -2,6 +2,15 @@
 import * as THREE from 'three';
 
 /* ------------------------------------------------------------- UV checker */
+// Satırlar A–H (üstten alta), sütunlar 0–7 (soldan sağa). Her hücredeki ↑ oku +V yönünü
+// gösterir: ok aşağı bakıyorsa UV dikeyde ters, etiket aynalanmışsa UV yatayda ters çevrilmiştir.
+const CHECKER_COLORS = ['#22506e', '#7fd3c8', '#f6e3a1', '#f29a7e', '#c9406c', '#2b2b2e', '#8c8c8f', '#d9d9db'];
+
+function luminance(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255;
+}
+
 export function makeCheckerTexture(size = 1024, cells = 8) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
@@ -10,23 +19,40 @@ export function makeCheckerTexture(size = 1024, cells = 8) {
   const letters = 'ABCDEFGHIJKLMNOP';
   for (let r = 0; r < cells; r++) {
     for (let col = 0; col < cells; col++) {
-      const hue = ((col / cells) * 300 + r * 9) % 360;
-      const dark = (r + col) % 2 === 0;
-      ctx.fillStyle = `hsl(${hue}, ${dark ? 38 : 55}%, ${dark ? 30 : 62}%)`;
-      ctx.fillRect(col * s, r * s, s, s);
-      // iç dama
-      ctx.fillStyle = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.08)';
-      const q = s / 4;
-      for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) if ((i + j) % 2) ctx.fillRect(col * s + i * q, r * s + j * q, q, q);
-      ctx.fillStyle = dark ? '#ffffff' : '#111318';
-      ctx.font = `bold ${Math.round(s * 0.3)}px "Segoe UI", Arial, sans-serif`;
+      const bg = CHECKER_COLORS[(r * 3 + col * 5 + (r >> 1)) % CHECKER_COLORS.length];
+      const x = col * s;
+      const y = r * s;
+      const light = luminance(bg) > 0.55;
+      const ink = light ? '#1d2228' : '#ffffff';
+      ctx.fillStyle = bg;
+      ctx.fillRect(x, y, s, s);
+      // ince iç ızgara
+      ctx.strokeStyle = light ? 'rgba(0,0,0,0.10)' : 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = Math.max(1, size / 1024);
+      for (let i = 1; i < 8; i++) {
+        const o = Math.round((i * s) / 8) + 0.5;
+        ctx.beginPath(); ctx.moveTo(x + o, y); ctx.lineTo(x + o, y + s); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(x, y + o); ctx.lineTo(x + s, y + o); ctx.stroke();
+      }
+      ctx.fillStyle = ink;
+      ctx.font = `600 ${Math.round(s * 0.26)}px "Segoe UI", Arial, sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // V ekseni yukarı doğru artar: alt satır "1"
-      ctx.fillText(`${letters[col]}${cells - r}`, col * s + s / 2, r * s + s / 2);
+      ctx.fillText(`${letters[r]}${col}`, x + s / 2, y + s * 0.3);
+      // +V yönünü gösteren ok
+      const ax = x + s / 2;
+      const top = y + s * 0.5;
+      const bottom = y + s * 0.86;
+      const head = s * 0.11;
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = Math.max(2, s * 0.035);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.beginPath(); ctx.moveTo(ax, bottom); ctx.lineTo(ax, top + head * 0.4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(ax - head, top + head); ctx.lineTo(ax, top); ctx.lineTo(ax + head, top + head); ctx.stroke();
     }
   }
-  ctx.strokeStyle = 'rgba(0,0,0,0.55)';
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
   ctx.lineWidth = Math.max(1, size / 512);
   for (let i = 0; i <= cells; i++) {
     ctx.beginPath(); ctx.moveTo(i * s, 0); ctx.lineTo(i * s, size); ctx.stroke();

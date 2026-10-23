@@ -194,11 +194,14 @@ export class Viewer extends EventTarget {
   }
 
   /* ------------------------------------------------------------- model */
-  setModel(object) {
+  /** rotateX: açılışta uygulanacak X ekseni döndürmesi (derece), ör. Z-yukarı modeller için -90. */
+  setModel(object, { rotateX = 0 } = {}) {
     this.clearModel(false);
     this.model = object;
-    this.modelPivot.rotation.set(0, 0, 0);
+    this.baseRotateX = rotateX;
+    this.modelPivot.rotation.set(THREE.MathUtils.degToRad(rotateX), 0, 0);
     this.modelPivot.add(object);
+    this.modelPivot.updateMatrixWorld(true);
     this.updatePlacement();
     this.fitCamera({ instant: true });
     this.dispatchEvent(new Event('modelchange'));
@@ -274,11 +277,18 @@ export class Viewer extends EventTarget {
     this.fitCamera();
   }
 
-  resetModelRotation() {
-    this.modelPivot.rotation.set(0, 0, 0);
+  /** Kullanıcı döndürmelerini atıp modeli açılış yönüne (veya verilen X açısına) getirir. */
+  setBaseRotation(rotateX = this.baseRotateX || 0) {
+    this.baseRotateX = rotateX;
+    this.modelPivot.rotation.set(THREE.MathUtils.degToRad(rotateX), 0, 0);
+    this.modelPivot.updateMatrixWorld(true);
     this.updatePlacement();
     this.refreshSelectionBox();
     this.fitCamera();
+  }
+
+  resetModelRotation() {
+    this.setBaseRotation();
   }
 
   /* ------------------------------------------------------------ camera */
@@ -312,7 +322,8 @@ export class Viewer extends EventTarget {
 
   focusObject(obj) {
     if (!obj) return;
-    const box = new THREE.Box3().setFromObject(obj, false);
+    const box = new THREE.Box3();
+    for (const r of selectionRoots(obj)) box.union(new THREE.Box3().setFromObject(r, false));
     if (box.isEmpty()) return;
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const dir = this.camera.position.clone().sub(this.controls.target).normalize();
@@ -446,12 +457,15 @@ export class Viewer extends EventTarget {
   }
 
   refreshSelectionBox() {
-    const obj = this.selection;
-    if (obj && isVisibleDeep(obj)) {
-      // kemikli mesh'lerin önbellekteki kutusu eski pozdan kalmış olabilir
-      obj.traverse(o => { if (o.isSkinnedMesh && !o.userData.isOverlay) o.computeBoundingBox(); });
-      this.selectionHelper.box.setFromObject(obj, false);
-      this.selectionHelper.visible = !this.selectionHelper.box.isEmpty();
+    const roots = selectionRoots(this.selection).filter(isVisibleDeep);
+    if (roots.length) {
+      const box = this.selectionHelper.box.makeEmpty();
+      for (const r of roots) {
+        // kemikli mesh'lerin önbellekteki kutusu eski pozdan kalmış olabilir
+        r.traverse(o => { if (o.isSkinnedMesh && !o.userData.isOverlay) o.computeBoundingBox(); });
+        box.union(new THREE.Box3().setFromObject(r, false));
+      }
+      this.selectionHelper.visible = !box.isEmpty();
     } else {
       this.selectionHelper.visible = false;
     }
@@ -564,8 +578,22 @@ export class Viewer extends EventTarget {
 }
 
 export function isVisibleDeep(o) {
+  if (o?.isSelectionGroup) return o.members.some(isVisibleDeep);
   for (let p = o; p; p = p.parent) if (!p.visible) return false;
   return true;
+}
+
+/**
+ * Seçim tek bir nesne ya da sahne ağacındaki sanal bir grup (materyale / ada göre) olabilir.
+ * Sanal grup: { isSelectionGroup: true, name, members: Object3D[] }.
+ */
+export function selectionRoots(sel) {
+  if (!sel) return [];
+  return sel.isSelectionGroup ? sel.members : [sel];
+}
+
+export function makeSelectionGroup(name, members, kind = 'group') {
+  return { isSelectionGroup: true, name, kind, members, type: 'Group' };
 }
 
 export function disposeObject(root) {
